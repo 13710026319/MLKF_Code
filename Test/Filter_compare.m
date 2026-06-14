@@ -10,7 +10,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\Trj_data_Veh4_Anc4_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\Trj_data_Veh4_Anc20_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc4_3D.mat'; 
     if ~exist(data_file, 'file')
@@ -177,17 +177,17 @@ for n = 1:Vehicle_num
                    trajectories.(v_name).Y_true, ...
                    trajectories.(v_name).Z_true];
 end
-
 [errors_cmlkf, rmse_cmlkf] = calculate_position_errors(pos_est_cmlkf, pos_true);
 [errors_ekf, rmse_ekf]     = calculate_position_errors(pos_est_ekf, pos_true);
 [errors_iekf, rmse_iekf]   = calculate_position_errors(pos_est_iekf, pos_true);
 
-% 组装比较表 [2]
-RowNames = cell(Vehicle_num * 2, 1);
-X_RMSE = zeros(Vehicle_num * 2, 1);
-Y_RMSE = zeros(Vehicle_num * 2, 1);
-Z_RMSE = zeros(Vehicle_num * 2, 1);
-Euc_RMSE = zeros(Vehicle_num * 2, 1);
+% 【修复 Bug】矩阵行数从 Vehicle_num * 2 修改为 Vehicle_num * 3
+total_rows = Vehicle_num * 3;
+RowNames = cell(total_rows, 1);
+X_RMSE = zeros(total_rows, 1);
+Y_RMSE = zeros(total_rows, 1);
+Z_RMSE = zeros(total_rows, 1);
+Euc_RMSE = zeros(total_rows, 1);
 
 for n = 1:Vehicle_num
     % 1. EKF (9D)
@@ -214,11 +214,23 @@ for n = 1:Vehicle_num
     Z_RMSE(idx_cmlkf)     = rmse_cmlkf(n).axis_rmse(3);
     Euc_RMSE(idx_cmlkf)   = rmse_cmlkf(n).euc_rmse;
 end
-
 rmse_comparison_table = table(X_RMSE, Y_RMSE, Z_RMSE, Euc_RMSE, 'RowNames', RowNames);
 disp(rmse_comparison_table);
 fprintf('===================================================================================================\n');
 
+%% 新增功能：计算并打印全车算法总均值及相较于 EKF 的提升百分比
+mean_euc_ekf   = mean([rmse_ekf.euc_rmse]);
+mean_euc_iekf  = mean([rmse_iekf.euc_rmse]);
+mean_euc_cmlkf = mean([rmse_cmlkf.euc_rmse]);
+
+% 计算提升百分比 (若误差减少则为正提升)
+impl_iekf  = (mean_euc_ekf - mean_euc_iekf) / mean_euc_ekf * 100;
+impl_cmlkf = (mean_euc_ekf - mean_euc_cmlkf) / mean_euc_ekf * 100;
+
+% 简洁一行打印
+fprintf('全车欧氏误差均值对比: EKF: %.4fm | IEKF: %.4fm (提升: %.1f%%) | CMLKF: %.4fm (提升: %.1f%%)\n', ...
+        mean_euc_ekf, mean_euc_iekf, impl_iekf, mean_euc_cmlkf, impl_cmlkf);
+fprintf('===================================================================================================\n');
 %% 6. 绘图对比
 time_arr = trajectories.V1.IMU_Time;
 figure('Name', 'Euclidean Position Errors: CMLKF VS EKF', 'Position', [100, 100, 1100, 800]);
