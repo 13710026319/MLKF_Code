@@ -12,7 +12,7 @@ dt_uwb = 0.1;               % UWB 采样时间 10Hz (0.1s)
 t_end = 300;                % 运行时间 300秒
 N_steps = round(t_end / dt_imu) + 1; % 30001 个采样点
 Vehicle_num = 4;            % 车辆数量
-Anchor_num = 19;             % 基站数量
+Anchor_num = 20;             % 基站数量
 
 % 基站高度在 0~8m 范围内实现非对称立体最大化错落
 
@@ -37,7 +37,7 @@ all_anchors_pool = [
      0, 30, 0;      % 17 (17基站新增)
     20, 33, 0;      % 18 (18基站新增)
     10, 0, 7.5;     % 19 (19基站新增)
-    10, 0, 0;     % 20 (20基站新增)
+    10, 0, 0;       % 20 (20基站新增)
 ];
 
 if Anchor_num > size(all_anchors_pool, 1) || Anchor_num < 4
