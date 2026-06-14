@@ -47,7 +47,7 @@ anchors = all_anchors_pool(1:Anchor_num, :);
 
 % 保存路径
 save_dir = 'E:\SE3_MLKF\Data'; 
-trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D.mat', Vehicle_num, Anchor_num);
+trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D_1.mat', Vehicle_num, Anchor_num);
    
 % 噪声参数
 IMU_noise_params.sigma_na = 0.03;      
