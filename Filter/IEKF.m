@@ -6,6 +6,7 @@ classdef IEKF < handle
         P                   % 联合协方差矩阵 [9I x 9I]
         Q_joint             % 联合过程噪声矩阵 [9I x 9I]
         g_vec               % 3D重力加速度常数 [1]
+        use_Jt = false;
     end
     
     methods
@@ -108,10 +109,6 @@ classdef IEKF < handle
             end
             R_cov = diag(R_list);
             
-            % ==================== J_t 比较开关 ====================
-            use_Jt = true;  % 启用流形一致性空间变换 J_t (严谨流形版)
-            % use_Jt = false; % 禁用 J_t (设为单位阵 I，极速简化版)
-            % =====================================================
             
             states_prior = obj.states;
             chi_opt = states_prior; % 初始时，当前迭代点为先验点
@@ -126,7 +123,7 @@ classdef IEKF < handle
                 J_joint = zeros(9*I, 9*I);
                 J_joint_inv = zeros(9*I, 9*I);
                 for i = 1:I
-                    if use_Jt
+                    if obj.use_Jt
                         % 计算当前迭代姿态相对于先验姿态的偏差向量
                         phi_e = so3_log(states_prior(i).R' * chi_opt(i).R);
                         % 理论推导：J_t 的姿态部分为 Jr_inv，其逆矩阵 J_t^-1 的姿态部分直接为 Jr

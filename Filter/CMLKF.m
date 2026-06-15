@@ -5,6 +5,7 @@ classdef CMLKF < handle
         P                   % 联合协方差矩阵 [15I x 15I] [3]
         Q_joint             % 联合过程噪声矩阵 [15I x 15I] [4]
         g_vec               % 3D重力加速度常数 [1]
+        use_Jt = true;
     end
     
     methods
@@ -80,7 +81,6 @@ classdef CMLKF < handle
         
         function update(obj, imu_acc, imu_gyro, anchors, uwb_anc, uwb_rel, ...
                         sig_acc, sig_gyro, sig_s, sig_z)
-            % 3.2 & 3.3 集中式 UWB+IMU 联合优化观测更新 (10Hz更新, 极速优化去J_t版) [4, 6]
             
             I = obj.Vehicle_num;
             
@@ -242,9 +242,30 @@ classdef CMLKF < handle
             end
             
             % 提取极大似然观测信息 (Eq 44) [6]
-            inv_Xi_t = H_jac_ML' * inv_R * H_jac_ML;
+             inv_Xi_t = H_jac_ML' * inv_R * H_jac_ML;
             
-            % --- 3. 极速更新：删去 J_t (等价于 J_t = I) --- [7]
+            
+            % --- 构造全局空间变换矩阵 J_joint (12I x 12I) ---
+            J_joint = zeros(12*I, 12*I);
+            for i = 1:I
+                if obj.use_Jt
+                    R_hat = states_prior(i).R;
+                    R_L = chi_L(i).R;
+                    % 计算当前迭代点与先验姿态的旋转偏差向量 (对应文档 Eq 60 下方公式)
+                    phi_e = so3_log(R_L' * R_hat);
+                    Jr_inv = so3_inv_right_jacobian(phi_e);
+                else
+                    Jr_inv = eye(3);
+                end
+                
+                J_i = eye(12);
+                J_i(7:9, 7:9) = Jr_inv; % \delta \phi 对应误差向量第 7:9 维
+                
+                row_idx = (i-1)*12 + (1:12);
+                J_joint(row_idx, row_idx) = J_i;
+            end
+            
+            % 构造似然偏差 \mu_t (对应文档 Eq 54)
             mu_t = zeros(12*I, 1);
             for i = 1:I
                 p_hat = states_prior(i).p;
@@ -272,9 +293,10 @@ classdef CMLKF < handle
                 pi_mat(row_idx, col_idx) = pi_i;
             end
             
-            % 直接映射信息项 (删去了 J_t, 更加平滑、无奇异) [7]
-            Lambda_t = pi_mat' * inv_Xi_t * pi_mat;
-            lambda_t = pi_mat' * (inv_Xi_t * mu_t);
+            % 结合 J_joint 进行信息投影 (对应文档 Eq 67 与 Eq 68)
+            inv_Xi_prior = J_joint' * inv_Xi_t * J_joint;
+            Lambda_t = pi_mat' * inv_Xi_prior * pi_mat;
+            lambda_t = pi_mat' * (J_joint' * (inv_Xi_t * mu_t));
             
             % 稳定的 Woodbury 形式协方差更新
             Sigma_prior = obj.P;
@@ -283,7 +305,7 @@ classdef CMLKF < handle
             Sigma_post = 0.5 * (Sigma_post + Sigma_post'); 
             obj.P = Sigma_post;
             
-            % 状态更新 Eq 62 [7]
+            % 状态更新 Eq 70
             dx_joint = Sigma_post * lambda_t;
             for i = 1:I
                 dx_i = dx_joint((i-1)*15 + (1:15));
@@ -369,9 +391,29 @@ classdef CMLKF < handle
                 H_i(4:6, 7:9) = eye(3);
                 H_jac_ML((i-1)*6 + (1:6), (i-1)*9 + (1:9)) = H_i;
             end
-            inv_Xi_t = H_jac_ML' * inv_R * H_jac_ML;
+             inv_Xi_t = H_jac_ML' * inv_R * H_jac_ML;
             
-            % 2. 标称状态似然偏差 \mu_t 提取 (对应 J_t = I 的极速算法形式) [7]
+            
+            % --- 构造全局空间变换矩阵 J_joint_imu (9I x 9I) ---
+            J_joint_imu = zeros(9*I, 9*I);
+            for i = 1:I
+                if obj.use_Jt
+                    R_hat = states_prior(i).R;
+                    R_L = chi_L(i).R;
+                    phi_e = so3_log(R_L' * R_hat);
+                    Jr_inv = so3_inv_right_jacobian(phi_e);
+                else
+                    Jr_inv = eye(3);
+                end
+                
+                J_i = eye(9);
+                J_i(4:6, 4:6) = Jr_inv; % \delta \phi 在 IMU 局部估计中对应第 4:6 维
+                
+                row_idx = (i-1)*9 + (1:9);
+                J_joint_imu(row_idx, row_idx) = J_i;
+            end
+            
+            % 标称状态似然偏差 \mu_t 提取
             mu_t = zeros(9*I, 1);
             for i = 1:I
                 a_hat = states_prior(i).a;
@@ -383,31 +425,32 @@ classdef CMLKF < handle
                 mu_t((i-1)*9 + (7:9)) = chi_L(i).omega - omega_hat;
             end
             
-            % 3. 构造 9I 维 IMU 测量误差切空间到 15I 维系统全误差切空间的投影选择矩阵
+            % 构造 9I 维 IMU 测量误差切空间到 15I 维系统全误差切空间的投影选择矩阵
             pi_IMU = zeros(9*I, 15*I);
             for i = 1:I
                 pi_i = zeros(9, 15);
-                pi_i(1:3, 7:9)   = eye(3);  % 选择 \delta a (排在15维全状态的 7:9 维) [2]
-                pi_i(4:6, 10:12) = eye(3);  % 选择 \delta \phi (10:12 维) [2]
-                pi_i(7:9, 13:15) = eye(3);  % 选择 \delta \omega (13:15 维) [2]
+                pi_i(1:3, 7:9)   = eye(3);  % 选择 \delta a
+                pi_i(4:6, 10:12) = eye(3);  % 选择 \delta \phi
+                pi_i(7:9, 13:15) = eye(3);  % 选择 \delta \omega
                 
                 row_idx = (i-1)*9 + (1:9);
                 col_idx = (i-1)*15 + (1:15);
                 pi_IMU(row_idx, col_idx) = pi_i;
             end
             
-            % 信息项投影 [7]
-            Lambda_t = pi_IMU' * inv_Xi_t * pi_IMU;
-            lambda_t = pi_IMU' * (inv_Xi_t * mu_t);
+            % 结合 J_joint_imu 进行信息投影
+            inv_Xi_prior = J_joint_imu' * inv_Xi_t * J_joint_imu;
+            Lambda_t = pi_IMU' * inv_Xi_prior * pi_IMU;
+            lambda_t = pi_IMU' * (J_joint_imu' * (inv_Xi_t * mu_t));
             
-            % 4. 稳定的无求逆卡尔曼融合
+            % 稳定的无求逆卡尔曼融合
             Sigma_prior = obj.P;
             S_eff = eye(15*I) + Lambda_t * Sigma_prior;
             Sigma_post = Sigma_prior - Sigma_prior * (S_eff \ (Lambda_t * Sigma_prior));
             Sigma_post = 0.5 * (Sigma_post + Sigma_post');
             obj.P = Sigma_post;
             
-            % 5. 流形状态纠正与重置 [7, 13]
+            % 流形状态纠正与重置 [7, 13]
             dx_joint = Sigma_post * lambda_t;
             for i = 1:I
                 dx_i = dx_joint((i-1)*15 + (1:15));

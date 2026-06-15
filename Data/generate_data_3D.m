@@ -7,12 +7,21 @@
 clc; clear; close all;
 
 %% 1. 全局参数设置与保存路径
-dt_imu = 0.01;              % IMU 采样时间 100Hz (0.01s)
-dt_uwb = 0.1;               % UWB 采样时间 10Hz (0.1s)
+F_imu = 10;                % 想要生成的 IMU 频率 (Hz)，例如 100 或 10
+F_uwb = 1;                 % 想要生成的 UWB 频率 (Hz)，例如 10 或 1
+
+dt_imu = 1 / F_imu;        % 自动计算 IMU 采样步长
+dt_uwb = 1 / F_uwb;        % 自动计算 UWB 采样步长
+
+uwb_downsample_factor = round(dt_uwb / dt_imu); 
+if mod(dt_uwb, dt_imu) ~= 0
+    error('警告：UWB 采样周期必须是 IMU 采样周期的整数倍！');
+end
+
 t_end = 300;                % 运行时间 300秒
 N_steps = round(t_end / dt_imu) + 1; % 30001 个采样点
 Vehicle_num = 4;            % 车辆数量
-Anchor_num = 20;             % 基站数量
+Anchor_num = 5;             % 基站数量
 
 % 基站高度在 0~8m 范围内实现非对称立体最大化错落
 
@@ -46,8 +55,8 @@ end
 anchors = all_anchors_pool(1:Anchor_num, :);
 
 % 保存路径
-save_dir = 'E:\SE3_MLKF\Data'; 
-trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D_1.mat', Vehicle_num, Anchor_num);
+save_dir = 'E:\SE3_MLKF\Data\Low_freq'; 
+trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D_low.mat', Vehicle_num, Anchor_num);
    
 % 噪声参数
 IMU_noise_params.sigma_na = 0.03;      
@@ -217,7 +226,7 @@ for n = 1:Vehicle_num
 end
 
 %% 4. 生成 10Hz 同步 UWB 测距信号
-idx_uwb = 1:10:N_steps;
+idx_uwb = 1:uwb_downsample_factor:N_steps;
 t_uwb = trajectories.V1.Time_true(idx_uwb);
 N_uwb = length(t_uwb);
 pos_true_uwb = zeros(N_uwb, 3, Vehicle_num);
