@@ -5,7 +5,7 @@ classdef CMLKF < handle
         P                   % 联合协方差矩阵 [15I x 15I] [3]
         Q_joint             % 联合过程噪声矩阵 [15I x 15I] [4]
         g_vec               % 3D重力加速度常数 [1]
-        use_Jt = true;
+        use_Jt = 0;
     end
     
     methods
