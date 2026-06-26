@@ -1,9 +1,9 @@
 classdef DMLKF
-    % DMLKF: 去中心化最大似然卡尔曼滤波器类
-    % 严格针对预测步与IMU更新步进行了NaN防御与数值优化设计
+    % DMLKF: 15维分布式最大似然卡尔曼滤波器类
+    % 严格对应高频IMU局部预测/更新与外置ADMM低频分布式一致性架构
     
     properties
-        id              % 节点ID
+        id              % 节点ID (1, 2, 3, 4...)
         state           % 状态结构体: .p(3x1), .v(3x1), .a(3x1), .R(3x3), .omega(3x1)
         I_indep         % 15x15 独立信息矩阵
         I_dep           % 15x15 相关信息矩阵
@@ -14,9 +14,9 @@ classdef DMLKF
         tau             % IMU采样周期 (秒)
         mu              % 高斯-牛顿正则化参数 (防御NaN)
         
-        % ADMM 持久化变量 (用于热启动，加速收敛并防抖动)
-        lambda_local    % 容器: 存储该车对邻车的拉格朗日乘子 (对应邻车ID)
-        lambda_remote   % 容器: 存储邻车对该车的拉格朗日乘子 (对应邻车ID)
+        % ADMM 持久化对偶变量 (用于热启动，持久化保持可以加速外层ADMM收敛)
+        lambda_local    % Map 容器: 存储该车对邻车的拉格朗日乘子 (Key: 邻车ID -> Value: 3x1 乘子)
+        lambda_remote   % Map 容器: 存储邻车对该车的拉格朗日乘子 (Key: 邻车ID -> Value: 3x1 乘子)
     end
     
     methods
@@ -26,7 +26,7 @@ classdef DMLKF
             obj.state = init_state;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
             
-            % 保证初始协方差不奇异，防NaN
+            % 保证初始协方差不奇异，防 NaN
             init_cov_safe = init_cov + 1e-10 * eye(15);
             obj.I_indep = obj.safe_inv(init_cov_safe);
             obj.I_dep = zeros(15, 15);
@@ -38,6 +38,13 @@ classdef DMLKF
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5; % 防止GN迭代中Hessian退化
             
+            obj.lambda_local = containers.Map('KeyType', 'double', 'ValueType', 'any');
+            obj.lambda_remote = containers.Map('KeyType', 'double', 'ValueType', 'any');
+        end
+        
+        %% 重置对偶变量 (新历元防爆机制)
+        function obj = reset_dual_variables(obj)
+            % 每次进入新的 UWB 历元，重置拉格朗日乘子，防止历史累积梯度带飞滤波器
             obj.lambda_local = containers.Map('KeyType', 'double', 'ValueType', 'any');
             obj.lambda_remote = containers.Map('KeyType', 'double', 'ValueType', 'any');
         end
@@ -57,7 +64,7 @@ classdef DMLKF
             obj.state.v = v_old + t_step * a_old;
             obj.state.a = a_old;
             
-            % 姿态传播，采用安全指数映射防NaN
+            % 姿态传播，采用安全指数映射防 NaN
             exp_w = obj.so3_exp_safe(t_step * w_old);
             obj.state.R = obj.robust_orthonormalize(R_old * exp_w);
             obj.state.omega = w_old;
@@ -68,7 +75,7 @@ classdef DMLKF
             A_t(1:3, 7:9)   = (t_step^2 / 2) * eye(3);
             A_t(4:6, 7:9)   = t_step * eye(3);
             
-            % 旋转误差传播项
+            % 旋转误差传播项 (带有负号)
             A_t(10:12, 10:12) = obj.so3_exp_safe(-t_step * w_old);
             A_t(10:12, 13:15) = t_step * obj.so3_right_jacobian_safe(t_step * w_old);
             
@@ -79,8 +86,7 @@ classdef DMLKF
             
             I_total_pred = obj.safe_inv(Sigma_pred);
             
-            % 数值优化计算分离算子 W_t以防极小值求逆导致NaN
-            % W_t = I_total_pred * A_t * Sigma_curr
+            % 计算分离算子 W_t 以防求逆导致 NaN
             W_t = Sigma_pred \ (A_t * Sigma_curr);
             if any(isnan(W_t(:))) || any(isinf(W_t(:)))
                 W_t = pinv(Sigma_pred) * (A_t * Sigma_curr);
@@ -93,7 +99,7 @@ classdef DMLKF
             I_indep_new = I_total_pred - I_dep_new;
             I_indep_new = 0.5 * (I_indep_new + I_indep_new');
             
-            % 更新并保护属性
+            % 更新并进行数值净化保护
             obj.I_indep = obj.sanitize_matrix(I_indep_new);
             obj.I_dep = obj.sanitize_matrix(I_dep_new);
         end
@@ -116,10 +122,9 @@ classdef DMLKF
             R_prior = obj.state.R;
             w_prior = obj.state.omega;
             
-            % 局部 Gauss-Newton 迭代求解非线性极值 (防御大偏差及极小值不收敛)
+            % 局部 Gauss-Newton 迭代求解非线性极值
             max_iter = 5;
             for iter = 1:max_iter
-                % 根据切空间更新当前名义状态估值 (Eq. 30)
                 da = s_IMU(1:3);
                 dphi = s_IMU(4:6);
                 domega = s_IMU(7:9);
@@ -146,23 +151,31 @@ classdef DMLKF
                 Hessian = H' * R_IMU_inv * H;
                 grad = H' * R_IMU_inv * r;
                 
-                % 求解更新增量并引入正则阻尼阻绝NaN (Eq. 38)
+                % 求解更新增量并引入正则阻尼阻绝 NaN (Eq. 38)
                 step = obj.safe_solve(Hessian, grad, obj.mu);
-                
+                % 增加步长截断防爆机制
+                max_step = 0.1; % 限制单次迭代最大变化量
+                n_step = norm(step);
+                if n_step > max_step
+                    step = step * (max_step / n_step);
+                end
                 s_IMU = s_IMU - step;
                 
-                % 如果发生数值奇异，提前终止避免扩散
+                % 收敛判定
+                if norm(step) < 1e-4
+                    break;
+                end
+                
                 if any(isnan(s_IMU)) || any(isinf(s_IMU))
                     s_IMU = zeros(9, 1);
                     break;
                 end
             end
             
-            % 再次提纯 s_IMU，确保迭代结果安全
+            % 数值净化
             s_IMU = obj.sanitize_vector(s_IMU);
             
             % --- 2.3 提取局部测量等效信息并融合 ---
-            % 提取收敛点对应的雅可比并计算 Lambda 和 lambda
             da = s_IMU(1:3); dphi = s_IMU(4:6); domega = s_IMU(7:9);
             a_converged = a_prior + da;
             R_converged = obj.robust_orthonormalize(R_prior * obj.so3_exp_safe(dphi));
@@ -177,23 +190,19 @@ classdef DMLKF
             lambda_IMU = Lambda_IMU * s_IMU;
             
             % 映射回 15 维全局先验切空间 (Eq. 42, 43)
-            % 选择矩阵 pi_IMU 的转置转回 15 维
             Lambda_full = zeros(15, 15);
             lambda_full = zeros(15, 1);
-            
-            % 9D 对应 15D 中的索引: da->7:9, dphi->10:12, domega->13:15
             idx_15 = 7:15;
             Lambda_full(idx_15, idx_15) = Lambda_IMU;
             lambda_full(idx_15) = lambda_IMU;
             
-            % 独立部分累加，相关部分不变 (Eq. 44, 45)
+            % 仅累加到独立部分 (Eq. 44, 45)
             obj.I_indep = obj.sanitize_matrix(obj.I_indep + Lambda_full);
             
-            % 计算后验协方差与切空间扰动更新 (Eq. 46-48)
+            % 计算后验协方差与切空间更新并回射 (Eq. 46-48)
             Sigma_post = obj.safe_inv(obj.I_indep + obj.I_dep);
             delta_theta = Sigma_post * lambda_full;
             
-            % 状态流形回射
             obj.state.p = obj.state.p + delta_theta(1:3);
             obj.state.v = obj.state.v + delta_theta(4:6);
             obj.state.a = obj.state.a + delta_theta(7:9);
@@ -203,21 +212,19 @@ classdef DMLKF
         
         %% 3.0 UWB 独立/相关信息投影 (边缘化输出接口 - 邻居车辆调用)
         function [p_est, I_pos_indep, I_pos_dep] = get_marginalized_position_info(obj)
-            % 邻居节点通过此接口提取并广播其3D位置边缘化信息
+            % 邻居通过该方法向发送端提供自身 3D 位置的边际化信息
             p_est = obj.state.p;
-            
             Sigma_j = obj.safe_inv(obj.I_indep + obj.I_dep);
             
-            % 位置对应前3维，提取对应的位置协方差
+            % 提取位置协方差 (1:3维)
             Sigma_pos = Sigma_j(1:3, 1:3);
             I_pos_total = obj.safe_inv(Sigma_pos);
             
-            % 构造投影矩阵 W_pos (Eq. 49)
-            % W_pos = I_pos_total * pi_p * Sigma
+            % 构造投影算子 W_pos (Eq. 49)
             pi_p = [eye(3), zeros(3, 12)];
             W_pos = I_pos_total * pi_p * Sigma_j;
             
-            % 计算投影边际化后的独立/相关信息 (Eq. 50, 51)
+            % 独立与相关信息分割投影 (Eq. 50, 51)
             I_pos_dep = W_pos * obj.I_dep * W_pos';
             I_pos_dep = 0.5 * (I_pos_dep + I_pos_dep');
             
@@ -228,13 +235,171 @@ classdef DMLKF
             I_pos_dep = obj.sanitize_matrix(I_pos_dep);
         end
         
-        % 3.1 - 3.4 去中心化低频 UWB 更新 (UWB Update - 10Hz)
-        function obj = update_uwb(obj, anchor_ranges, anchor_positions, ...
-                                  neighbor_ids, neighbor_positions, ...
-                                  neighbor_I_indep, neighbor_I_dep, ...
-                                  relative_ranges, sigma_s, sigma_z)
-            % ... (前面的代码保持不变) ...
+        %% ====================================================================
+        %   重构后的 ADMM 与 分布式更新公共接口
+        %  ====================================================================
+        
+        %% 【公共接口 1】Primal Update 求解器 (内层 GN 迭代 - 由外部ADMM循环调用)
+        function s_admm = solve_primal_public(obj, s_admm_init, anchor_ranges, anchor_positions, ...
+                                              neighbor_positions, relative_ranges, ...
+                                              sigma_s, sigma_z, rho, neighbor_ids, ...
+                                              dp_neigh_neigh, dp_neigh_self)
+            % 求解拉格朗日目标函数的切空间一阶估计
+            % dp_neigh_neigh: 3xM 矩阵，第 i 列代表邻居对自身的真实 ADMM 位置误差估计
+            % dp_neigh_self: 3xM 矩阵，第 i 列代表邻居对本车的真实 ADMM 位置误差估计
             
+            K = length(anchor_ranges);
+            M = length(neighbor_ids);
+            s_dim = length(s_admm_init);
+            s_admm = s_admm_init;
+            
+            max_inner_gn = 5; % 限制最大内层迭代次数为 5 次
+            for inner_iter = 1:max_inner_gn
+                p_self_est = obj.state.p + s_admm(1:3);
+                
+                % 基站观测残差与LOS
+                r_anc = zeros(K, 1);
+                u_anc = zeros(3, K);
+                for k = 1:K
+                    vec = p_self_est - anchor_positions(k, :)';
+                    dist = max(norm(vec), 1e-6);
+                    u_anc(:, k) = vec / dist;
+                    r_anc(k) = anchor_ranges(k) - dist;
+                end
+                
+                % 邻居观测残差与LOS (Eq. 59-60)
+                r_int = zeros(M, 1);
+                u_int = zeros(3, M);
+                for i = 1:M
+                    dp_self_neigh = s_admm(3*i + (1:3));
+                    p_neigh_est = neighbor_positions(i, :)' + dp_self_neigh;
+                    vec = p_self_est - p_neigh_est;
+                    dist = max(norm(vec), 1e-6);
+                    u_int(:, i) = vec / dist;
+                    r_int(i) = relative_ranges(i) - dist;
+                end
+                
+                % 构造拉格朗日梯度向量 g_L (Eq. 61-63)
+                g_L = zeros(s_dim, 1);
+                
+                % 本车位置梯度分量 (Eq. 62)
+                g_dp11 = zeros(3, 1);
+                for k = 1:K
+                    g_dp11 = g_dp11 - (1 / sigma_s^2) * u_anc(:, k) * r_anc(k);
+                end
+                for i = 1:M
+                    nid = neighbor_ids(i);
+                    
+                    % 新增：对偶变量延迟初始化防御，防止首轮迭代找不到 Key 报错
+                    if ~isKey(obj.lambda_remote, nid)
+                        obj.lambda_remote(nid) = zeros(3, 1);
+                    end
+                    if ~isKey(obj.lambda_local, nid)
+                        obj.lambda_local(nid) = zeros(3, 1);
+                    end
+                    
+                    g_dp11 = g_dp11 - (1 / sigma_z^2) * u_int(:, i) * r_int(i) ...
+                             + (-obj.lambda_remote(nid) - rho * (dp_neigh_self(:, i) - s_admm(1:3)));
+                end
+                g_L(1:3) = g_dp11;
+                
+                % 邻车估计梯度分量 (Eq. 63)
+                for i = 1:M
+                    nid = neighbor_ids(i);
+                    
+                    % 新增：对偶变量延迟初始化防御，防止首轮迭代找不到 Key 报错
+                    if ~isKey(obj.lambda_remote, nid)
+                        obj.lambda_remote(nid) = zeros(3, 1);
+                    end
+                    if ~isKey(obj.lambda_local, nid)
+                        obj.lambda_local(nid) = zeros(3, 1);
+                    end
+                    
+                    dp_self_neigh = s_admm(3*i + (1:3));
+                    g_dp1j = (1 / sigma_z^2) * u_int(:, i) * r_int(i) ...
+                             + obj.lambda_local(nid) + rho * (dp_self_neigh - dp_neigh_neigh(:, i));
+                    g_L(3*i + (1:3)) = g_dp1j;
+                end
+                
+                % 构造近似 Hessian H_L (Eq. 64)
+                H_L = zeros(s_dim, s_dim);
+                for k = 1:K
+                    H_k = zeros(1, s_dim);
+                    H_k(1:3) = -u_anc(:, k)';
+                    H_L = H_L + (1 / sigma_s^2) * (H_k' * H_k);
+                end
+                for i = 1:M
+                    H_int = zeros(1, s_dim);
+                    H_int(1:3) = -u_int(:, i)';
+                    H_int(3*i + (1:3)) = u_int(:, i)';
+                    H_L = H_L + (1 / sigma_z^2) * (H_int' * H_int);
+                end
+                
+                % ADMM 罚项块 H_penalty (Eq. 66)
+                D_penalty = zeros(s_dim, s_dim);
+                D_penalty(1:3, 1:3) = (M * rho) * eye(3);
+                for i = 1:M
+                    idx = 3*i + (1:3);
+                    D_penalty(idx, idx) = rho * eye(3);
+                end
+                H_L = H_L + D_penalty;
+                
+                % 安全线性求解
+                step = obj.safe_solve(H_L, g_L, obj.mu);
+                % 增加步长截断防爆机制
+                max_step_admm = 0.1; % 限制ADMM单步最大更新量
+                n_step_admm = norm(step);
+                if n_step_admm > max_step_admm
+                    step = step * (max_step_admm / n_step_admm);
+                end
+                s_admm = s_admm - step;
+                
+                % 收敛提前终止判定
+                if norm(step) < 1e-4
+                    break;
+                end
+                
+                if any(isnan(s_admm)) || any(isinf(s_admm))
+                    s_admm = s_admm_init;
+                    break;
+                end
+            end
+            s_admm = obj.sanitize_vector(s_admm);
+        end
+        
+        %% 【公共接口 2】Dual Variable Update (拉格朗日乘子更新)
+        function obj = update_dual(obj, s_admm, neighbor_ids, dp_neigh_neigh, dp_neigh_self, rho)
+            % 更新该车关联各邻车的 Lagrange 乘子
+            % s_admm: 该车本轮收敛的 primal 状态估计 [dp_self; dp_self_neigh1; dp_self_neigh2...]
+            % dp_neigh_neigh: 3xM 矩阵，邻车对各自本身的估计
+            % dp_neigh_self: 3xM 矩阵，邻车对本车的估计
+            M = length(neighbor_ids);
+            dp_self_est = s_admm(1:3);
+            
+            for i = 1:M
+                nid = neighbor_ids(i);
+                dp_self_neigh = s_admm(3*i + (1:3));
+                
+                % 如果该邻车的乘子容器键值不存在，先行初始化
+                if ~isKey(obj.lambda_local, nid)
+                    obj.lambda_local(nid) = zeros(3, 1);
+                    obj.lambda_remote(nid) = zeros(3, 1);
+                end
+                
+                % 本地乘子更新 (Eq. 56)
+                obj.lambda_local(nid) = obj.lambda_local(nid) + rho * (dp_self_neigh - dp_neigh_neigh(:, i));
+                % 远端乘子更新 (Eq. 57)
+                obj.lambda_remote(nid) = obj.lambda_remote(nid) + rho * (dp_neigh_self(:, i) - dp_self_est);
+            end
+        end
+        
+        %% 【公共接口 3】信息融合与状态回射更新 (UWB更新收尾融合 - 在ADMM全局收敛后调用)
+        function obj = apply_uwb_update(obj, s_star, anchor_ranges, anchor_positions, ...
+                                        neighbor_ids, neighbor_positions, ...
+                                        neighbor_I_indep, neighbor_I_dep, ...
+                                        relative_ranges, sigma_s, sigma_z)
+            % 注: 极值收敛点提取模型（MLKF）中，测量值 relative_ranges 已被 Primal Update 完全吸收
+            % 此处形参保留用于接口模式的完整，核心计算使用基于最优切空间 s_star 提取等效测量信息
             K = length(anchor_ranges);
             M = length(neighbor_ids);
             
@@ -243,60 +408,10 @@ classdef DMLKF
                 return;
             end
             
-            % --- 初始化 ADMM 迭代状态 ---
-            s_dim = 3 * (M + 1);
-            s_admm = zeros(s_dim, 1);
-            
-            for i = 1:M
-                nid = neighbor_ids(i);
-                if ~isKey(obj.lambda_local, nid)
-                    obj.lambda_local(nid) = zeros(3, 1);
-                    obj.lambda_remote(nid) = zeros(3, 1);
-                end
-            end
-            
-            rho = 1.0;
-            max_admm_iter = 10;
-            dual_tol = 1e-3;
-            
-            dp_neigh_neigh = zeros(3, M); 
-            dp_neigh_self = zeros(3, M);  
-            
-            % --- ADMM 外层循环 ---
-            for admm_k = 1:max_admm_iter
-                s_admm = obj.solve_admm_primal(s_admm, anchor_ranges, anchor_positions, ...
-                                               neighbor_positions, relative_ranges, ...
-                                               sigma_s, sigma_z, rho, neighbor_ids, ...
-                                               dp_neigh_neigh, dp_neigh_self);
-                
-                % 模拟通信获取邻居估计值
-                for i = 1:M
-                    dp_neigh_neigh(:, i) = zeros(3, 1); 
-                    dp_neigh_self(:, i) = s_admm(1:3);  
-                end
-                
-                dp_self_est = s_admm(1:3);
-                for i = 1:M
-                    nid = neighbor_ids(i);
-                    dp_self_neigh = s_admm(3*i + (1:3)); 
-                    obj.lambda_local(nid) = obj.lambda_local(nid) + rho * (dp_self_neigh - dp_neigh_neigh(:, i));
-                    obj.lambda_remote(nid) = obj.lambda_remote(nid) + rho * (dp_neigh_self(:, i) - dp_self_est);
-                end
-                
-                dual_residual = 0;
-                for i = 1:M
-                    nid = neighbor_ids(i);
-                    dual_residual = dual_residual + norm(dp_self_est - dp_neigh_self(:, i));
-                end
-                if dual_residual < dual_tol
-                    break;
-                end
-            end
-            
-            % --- 3.2 构造收敛后的联合测量信息矩阵 ---
-            s_star = s_admm;
             p_self_converged = obj.state.p + s_star(1:3);
             
+            % --- 3.2 构造收敛后的联合测量信息矩阵 (Eq. 69) ---
+            % A. 绝对基站分量
             Xi_aa = zeros(3, 3);
             for k = 1:K
                 u_k = (p_self_converged - anchor_positions(k, :)') / ...
@@ -304,12 +419,13 @@ classdef DMLKF
                 Xi_aa = Xi_aa + (1 / sigma_s^2) * (u_k * u_k');
             end
             
+            % B. 相对协同测距分量
             Xi_ii_11 = zeros(3, 3);
             Xi_ii_12 = zeros(3, 3 * M);
             Xi_ii_22 = zeros(3 * M, 3 * M);
             
             for i = 1:M
-                dp_self_neigh = s_star(3*i + (1:3)); % 此处索引已修正
+                dp_self_neigh = s_star(3*i + (1:3));
                 p_neigh_converged = neighbor_positions(i, :)' + dp_self_neigh;
                 
                 u_ij = (p_self_converged - p_neigh_converged) / ...
@@ -322,32 +438,31 @@ classdef DMLKF
                 Xi_ii_22(3*(i-1)+(1:3), 3*(i-1)+(1:3)) = Xi_block;
             end
             
-            % --- 3.3 基于 SCI 的舒尔补边缘化 (此处为报错修改点) ---
-            omega_self = 0.5;
-            omega_neigh = 0.5 / M; 
+            % --- 3.3 基于 SCI 的舒尔补边缘化 ---
+            omega_self = 0.8;
+            omega_neigh = 0.2 / M; 
             
             P22_SCI_inv = zeros(3 * M, 3 * M);
             s_neigh_mle = zeros(3 * M, 1);
             for i = 1:M
-                idx = 3*(i-1)+(1:3); % 对应 P22_SCI_inv 块的索引 (1:3, 4:6...)
+                idx = 3*(i-1)+(1:3);
                 
-                % SCI加权先验
+                % SCI加权先验 (Eq. 70)
                 Lambda_j_SCI = neighbor_I_indep{i} + omega_neigh * neighbor_I_dep{i};
                 P22_SCI_inv(idx, idx) = Lambda_j_SCI;
                 
-                % 【修正项】：s_neigh_mle 的对应部分来自 s_star 的第 i 个邻居槽位
-                % s_star = [dp_self (1:3); dp_neigh1 (4:6); dp_neigh2 (7:9)]
+                % 从 s_star 的对应邻居槽提取误差估计
                 s_neigh_mle(idx) = s_star(3*i + (1:3)); 
             end
             
-            % 舒尔补计算
+            % 舒尔补解算
             P22_temp_inv = obj.safe_inv(Xi_ii_22 + P22_SCI_inv);
             
-            % 边缘化信息矩阵
+            % 边缘化等效测量信息 (Eq. 73, 74)
             Lambda_t_anc = Xi_aa;
             Lambda_t_int = Xi_ii_11 - Xi_ii_12 * P22_temp_inv * Xi_ii_12';
             
-            % 边缘化信息向量 (Eq. 77)
+            % 边缘化信息向量 (Eq. 76, 77)
             s_self_mle = s_star(1:3);
             lambda_t_anc = Lambda_t_anc * s_self_mle;
             lambda_t_int = Lambda_t_int * s_self_mle + Xi_ii_12 * P22_temp_inv * P22_SCI_inv * s_neigh_mle;
@@ -359,13 +474,14 @@ classdef DMLKF
             Lambda_int_full = zeros(15, 15); Lambda_int_full(1:3, 1:3) = Lambda_t_int;
             lambda_int_full = zeros(15, 1);  lambda_int_full(1:3) = lambda_t_int;
             
+            % 更新分裂信息矩阵独立组件与相关组件 (Eq. 80, 81)
             obj.I_indep = obj.sanitize_matrix(obj.I_indep + Lambda_anc_full);
             obj.I_dep = obj.sanitize_matrix(omega_self * obj.I_dep + Lambda_int_full);
             
+            % 后验增量解算并回射状态 (Eq. 82-84)
             Sigma_post = obj.safe_inv(obj.I_indep + obj.I_dep);
             delta_theta = Sigma_post * (lambda_anc_full + lambda_int_full);
             
-            % 状态更新
             obj.state.p = obj.state.p + delta_theta(1:3);
             obj.state.v = obj.state.v + delta_theta(4:6);
             obj.state.a = obj.state.a + delta_theta(7:9);
@@ -373,9 +489,9 @@ classdef DMLKF
             obj.state.omega = obj.state.omega + delta_theta(13:15);
         end
         
-        %% UWB定位外部调试接口
-        function [dp_self, dp_neigh] = get_admm_primal_estimates(obj, s_admm, neighbor_ids)
-            % 获取当前 ADMM 的一阶解以便外部网络分发
+        %% 外部测试辅助接口：获取当前 ADMM Primal 中各槽位的解
+        function [dp_self, dp_neigh] = get_admm_primal_estimates(~, s_admm, neighbor_ids)
+            % 获取当前 ADMM Primal 状态，供测试脚本全局提取、分发使用
             dp_self = s_admm(1:3);
             M = length(neighbor_ids);
             dp_neigh = zeros(3, M);
@@ -383,117 +499,13 @@ classdef DMLKF
                 dp_neigh(:, i) = s_admm(3*i + (1:3));
             end
         end
-    end
-    
-    %% 内部辅助/数值安全函数 (NaN防线)
-    methods (Access = private)
-        %% ADMM Primal Update 求解器 (内层 GN 迭代)
-        function s_admm = solve_admm_primal(obj, s_admm_init, anchor_ranges, anchor_positions, ...
-                                            neighbor_positions, relative_ranges, ...
-                                            sigma_s, sigma_z, rho, neighbor_ids, ...
-                                            dp_neigh_neigh, dp_neigh_self)
-            K = length(anchor_ranges);
-            M = length(neighbor_ids);
-            s_dim = length(s_admm_init);
-            s_admm = s_admm_init;
-            
-            max_inner_gn = 5;
-            for inner_iter = 1:max_inner_gn
-                % 1. 计算线段向量及测量残差
-                p_self_est = obj.state.p + s_admm(1:3);
-                
-                % 基站残差与LOS
-                r_anc = zeros(K, 1);
-                u_anc = zeros(3, K);
-                for k = 1:K
-                    vec = p_self_est - anchor_positions(k, :)';
-                    dist = max(norm(vec), 1e-6);
-                    u_anc(:, k) = vec / dist;
-                    r_anc(k) = anchor_ranges(k) - dist;
-                end
-                
-                % 邻居残差与LOS
-                r_int = zeros(M, 1);
-                u_int = zeros(3, M);
-                for i = 1:M
-                    dp_self_neigh = s_admm(3*i + (1:3));
-                    p_neigh_est = neighbor_positions(i, :)' + dp_self_neigh;
-                    vec = p_self_est - p_neigh_est;
-                    dist = max(norm(vec), 1e-6);
-                    u_int(:, i) = vec / dist;
-                    r_int(i) = relative_ranges(i) - dist;
-                end
-                
-                % 2. 构造拉格朗日梯度向量 g_L (Eq. 61-63)
-                g_L = zeros(s_dim, 1);
-                
-                % 本车位置梯度分量 (Eq. 62)
-                g_dp11 = zeros(3, 1);
-                for k = 1:K
-                    g_dp11 = g_dp11 - (1 / sigma_s^2) * u_anc(:, k) * r_anc(k);
-                end
-                for i = 1:M
-                    nid = neighbor_ids(i);
-                    g_dp11 = g_dp11 - (1 / sigma_z^2) * u_int(:, i) * r_int(i) ...
-                             + (-obj.lambda_remote(nid) - rho * (dp_neigh_self(:, i) - s_admm(1:3)));
-                end
-                g_L(1:3) = g_dp11;
-                
-                % 邻车估计梯度分量 (Eq. 63)
-                for i = 1:M
-                    nid = neighbor_ids(i);
-                    dp_self_neigh = s_admm(3*i + (1:3));
-                    g_dp1j = (1 / sigma_z^2) * u_int(:, i) * r_int(i) ...
-                             + obj.lambda_local(nid) + rho * (dp_self_neigh - dp_neigh_neigh(:, i));
-                    g_L(3*i + (1:3)) = g_dp1j;
-                end
-                
-                % 3. 构造近似 Hessian H_L (Eq. 64)
-                H_L = zeros(s_dim, s_dim);
-                
-                % 基站观测雅可比项
-                for k = 1:K
-                    H_k = zeros(1, s_dim);
-                    H_k(1:3) = -u_anc(:, k)';
-                    H_L = H_L + (1 / sigma_s^2) * (H_k' * H_k);
-                end
-                
-                % 邻车协同观测雅可比项 (Eq. 65)
-                for i = 1:M
-                    H_int = zeros(1, s_dim);
-                    H_int(1:3) = -u_int(:, i)';
-                    H_int(3*i + (1:3)) = u_int(:, i)';
-                    H_L = H_L + (1 / sigma_z^2) * (H_int' * H_int);
-                end
-                
-                % ADMM 罚项块 H_penalty (Eq. 66)
-                D_penalty = zeros(s_dim, s_dim);
-                D_penalty(1:3, 1:3) = (M * rho) * eye(3); % M个惩罚流
-                for i = 1:M
-                    idx = 3*i + (1:3);
-                    D_penalty(idx, idx) = rho * eye(3);
-                end
-                H_L = H_L + D_penalty;
-                
-                % 4. 计算更新步并引入极小阻尼 (Eq. 67)
-                step = obj.safe_solve(H_L, g_L, obj.mu);
-                s_admm = s_admm - step;
-                
-                if any(isnan(s_admm)) || any(isinf(s_admm))
-                    s_admm = s_admm_init;
-                    break;
-                end
-            end
-            s_admm = obj.sanitize_vector(s_admm);
-        end
         
-        %% 无邻车时退化的单车UWB位置更新 (Anchor Only)
+        %% 无邻车时退化的单车 UWB 位置更新 (Anchor Only)
         function obj = update_uwb_anchor_only(obj, anchor_ranges, anchor_positions, sigma_s)
             K = length(anchor_ranges);
             s_pos = zeros(3, 1);
             p_prior = obj.state.p;
             
-            % 纯基站 Gauss-Newton
             for iter = 1:5
                 p_est = p_prior + s_pos;
                 r = zeros(K, 1);
@@ -510,7 +522,6 @@ classdef DMLKF
                 s_pos = s_pos - step;
             end
             
-            % 更新
             Lambda_anc = (1/sigma_s^2) * (H' * H);
             lambda_anc = Lambda_anc * s_pos;
             
@@ -526,8 +537,11 @@ classdef DMLKF
             obj.state.a = obj.state.a + delta_theta(7:9);
             obj.state.R = obj.robust_orthonormalize(obj.state.R * obj.so3_exp_safe(delta_theta(10:12)));
         end
-        
-        %% 数值安全：SVD强制三维正交归一化 (防止由于姿态漂移引入NaN)
+    end
+    
+    %% 内部数值安全与数学辅助函数
+    methods (Access = private)
+        %% SVD强制旋转矩阵正交归一化 (防漂移NaN)
         function R_orth = robust_orthonormalize(~, R)
             if any(isnan(R(:))) || any(isinf(R(:)))
                 R_orth = eye(3);
@@ -535,13 +549,12 @@ classdef DMLKF
             end
             [U, ~, V] = svd(R);
             R_orth = U * V';
-            % 防止镜像旋转
             if det(R_orth) < 0
                 R_orth = U * diag([1, 1, -1]) * V';
             end
         end
         
-        %% 数值安全：安全的李群指数映射 (防止 w=0 时零除产生NaN)
+        %% 李群 SO(3) 安全指数映射
         function R = so3_exp_safe(obj, phi)
             theta = norm(phi);
             phi_skew = obj.skew_matrix(phi);
@@ -552,29 +565,27 @@ classdef DMLKF
             end
         end
         
-        %% 数值安全：安全的右雅可比，泰勒级数截断保护 (关键防御NaN点)
+        %% 李群 SO(3) 安全右雅可比 (1e-3以下使用泰勒展开防御大抵消与NaN)
         function Jr = so3_right_jacobian_safe(obj, phi)
             theta = norm(phi);
             phi_skew = obj.skew_matrix(phi);
             if theta < 1e-3
-                % 在 1e-3 以下采用泰勒展开，防止数值下溢除以 theta 造成 NaN
                 Jr = eye(3) - 0.5 * phi_skew + (1/6) * (phi_skew * phi_skew);
             else
                 Jr = eye(3) - ((1 - cos(theta))/theta^2) * phi_skew + ((theta - sin(theta))/theta^3) * (phi_skew * phi_skew);
             end
         end
         
-        %% 数值安全：逆求解器保护
+        %% 线性方程阻尼求解器 (防御 Hessian 退化NaN)
         function x = safe_solve(~, A, b, reg)
-            % 叠加小正则化项防止阻尼退化奇异
             A_reg = A + reg * eye(size(A));
             x = A_reg \ b;
             if any(isnan(x)) || any(isinf(x))
-                x = pinv(A) * b; % 伪逆二次防御
+                x = pinv(A) * b;
             end
         end
         
-        %% 数值安全：求逆保护
+        %% 信息矩阵求逆器 (伪逆兜底)
         function A_inv = safe_inv(~, A)
             A_reg = A + 1e-11 * eye(size(A));
             A_inv = inv(A_reg);
@@ -583,23 +594,22 @@ classdef DMLKF
             end
         end
         
-        %% 数值安全：过滤 NaN/Inf 矩阵，强制收敛边界
+        %% 矩阵净化与对称化
         function M_out = sanitize_matrix(~, M_in)
             M_out = M_in;
             M_out(isnan(M_out)) = 0;
             M_out(isinf(M_out)) = 0;
-            % 保证对称性
             M_out = 0.5 * (M_out + M_out');
         end
         
-        %% 数值安全：过滤 NaN/Inf 向量
+        %% 向量净化
         function v_out = sanitize_vector(~, v_in)
             v_out = v_in;
             v_out(isnan(v_out)) = 0;
             v_out(isinf(v_out)) = 0;
         end
         
-        %% 伴随与反对称辅助函数
+        %% 反对称反对称矩阵构造
         function skew_R = skew_matrix(~, v)
             skew_R = [0, -v(3), v(2); v(3), 0, -v(1); -v(2), v(1), 0];
         end

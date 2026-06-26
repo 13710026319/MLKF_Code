@@ -11,7 +11,7 @@ addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
 % 指定的仿真数据集路径
-data_file = 'E:\SE3_MLKF\Data\Trj_data_Veh4_Anc4_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\Trj_data_Veh4_Anc11_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc4_2D.mat'; % 相对路径备用
     if ~exist(data_file, 'file')
@@ -70,11 +70,11 @@ P_n_init = diag([ ...
 init_P = kron(eye(Vehicle_num), P_n_init);
 
 % 设定动力学系统过程噪声标准差 (对应 w_t^i, 文档 1.1 节) [1]
-Q_sigmas.sig_wp     = 0.001;  % 位置过程噪声
-Q_sigmas.sig_wv     = 0.005;  % 速度过程噪声
-Q_sigmas.sig_wa     = 0.05;   % 加速度随机游走
-Q_sigmas.sig_wR     = 0.001;  % 姿态随机游走
-Q_sigmas.sig_womega = 0.005;  % 角速度随机游走
+Q_sigmas.sig_wp     = 0;  % 位置过程噪声
+Q_sigmas.sig_wv     = 0;  % 速度过程噪声
+Q_sigmas.sig_wa     = 0.0005;   % 加速度随机游走
+Q_sigmas.sig_wR     = 0.00005;  % 姿态随机游走
+Q_sigmas.sig_womega = 0.00005;  % 角速度随机游走
 
 % 实例化新版 CMLKF
 filter = CMLKF(init_states, init_P, Q_sigmas);
@@ -85,34 +85,38 @@ for n = 1:Vehicle_num
     pos_est{n} = zeros(N_steps, 3);
     pos_est{n}(1, :) = init_states(n).p';
 end
-
 fprintf('开始执行新版多车 CMLKF 协同估计...\n');
 tic;
 for k = 2:N_steps
+    % ==========================================
+    % 核心修改 1：将 IMU 数据提取移到 if 外部（每步必做）
+    % ==========================================
+    imu_acc = zeros(Vehicle_num, 3);
+    imu_gyro = zeros(Vehicle_num, 3);
+    for n = 1:Vehicle_num
+        v_name = sprintf('V%d', n);
+        veh = trajectories.(v_name);
+        
+        % 读取真实的 IMU 零偏并预校正
+        ba_true = veh.IMU_bias_a_true(k, :)';
+        bw_true = veh.IMU_bias_w_true(k, :)';
+        imu_acc(n, :)  = (veh.IMU_acc_m(k, :)'  - ba_true)';
+        imu_gyro(n, :) = (veh.IMU_gyro_m(k, :)' - bw_true)';
+    end
+    
     % A. 系统标称状态与误差前向前向积分 (100Hz 纯预测步) [3]
     filter.propagate(dt_imu);
     
-    % B. UWB 与 IMU 联合观测更新时刻 (10Hz，对应 1, 11, 21...) [8]
+    % B. 观测更新步
     if mod(k - 1, 10) == 0
+        % --- UWB与高频预修正IMU 联合观测更新时刻 (10Hz) ---
         uwb_idx = (k - 1) / 10 + 1;
-        
-        imu_acc = zeros(Vehicle_num, 3);
-        imu_gyro = zeros(Vehicle_num, 3);
         anc_meas = zeros(Vehicle_num, Anchor_num);
         rel_meas = zeros(Vehicle_num, Vehicle_num);
         
         for n = 1:Vehicle_num
             v_name = sprintf('V%d', n);
             veh = trajectories.(v_name);
-            
-            % 读取真实的 IMU 零偏 (假设已知常数) [1]
-            ba_true = veh.IMU_bias_a_true(k, :)';
-            bw_true = veh.IMU_bias_w_true(k, :)';
-            
-            % 提取原始 IMU 信号并做预校正，获得 \tilde{a} 和 \tilde{omega} (文档 Eq 7, 8) [1]
-            imu_acc(n, :)  = (veh.IMU_acc_m(k, :)'  - ba_true)';
-            imu_gyro(n, :) = (veh.IMU_gyro_m(k, :)' - bw_true)';
-            
             % 提取当前周期 UWB 测距 [8]
             anc_meas(n, :) = veh.UWB_Anchor(uwb_idx, 2:end);
             rel_meas(n, :) = veh.UWB_Relative(uwb_idx, 2:end);
@@ -122,6 +126,12 @@ for k = 2:N_steps
         filter.update(imu_acc, imu_gyro, anchors, anc_meas, rel_meas, ...
                       IMU_noise_params.sigma_na, IMU_noise_params.sigma_nw, ...
                       UWB_noise_params.sigma_anc, UWB_noise_params.sigma_rel);
+    else
+        % ==========================================
+        % 核心修改 2：补上 else 分支，执行高频 IMU 更新 (其余 90Hz 步)
+        % ==========================================
+        filter.update_imu_only(imu_acc, imu_gyro, ...
+                               IMU_noise_params.sigma_na, IMU_noise_params.sigma_nw);
     end
     
     % C. 收集估计值
@@ -150,18 +160,24 @@ Y_RMSE = zeros(Vehicle_num, 1);
 Z_RMSE = zeros(Vehicle_num, 1);
 Euc_RMSE = zeros(Vehicle_num, 1);
 
+Mean_Euc_RMSE = 0;
+
 for n = 1:Vehicle_num
     RowNames{n} = sprintf('Vehicle_%d', n);
     X_RMSE(n)   = rmse(n).axis_rmse(1);
     Y_RMSE(n)   = rmse(n).axis_rmse(2);
     Z_RMSE(n)   = rmse(n).axis_rmse(3);
     Euc_RMSE(n) = rmse(n).euc_rmse;
+    Mean_Euc_RMSE = Mean_Euc_RMSE + rmse(n).euc_rmse;
 end
 
 rmse_table = table(X_RMSE, Y_RMSE, Z_RMSE, Euc_RMSE, 'RowNames', RowNames);
 fprintf('\n================== 新版 CMLKF 定位 RMSE 评估表 ==================\n');
 disp(rmse_table);
 fprintf('=================================================================\n');
+
+fprintf('全车欧氏误差均值: CMLKF: %.4fm \n', Mean_Euc_RMSE/Vehicle_num);
+fprintf('===================================================================================================\n');
 
 %% 6. 绘图 (欧氏定位误差曲线)
 time_arr = trajectories.V1.IMU_Time;

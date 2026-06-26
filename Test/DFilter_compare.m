@@ -11,7 +11,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\Trj_data_Veh4_Anc5_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\Trj_data_Veh4_Anc6_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat'; 
     if ~exist(data_file, 'file')
@@ -46,12 +46,15 @@ end
 %% 3. 初始化分布式 DMLKF 状态估值器
 % A. 【过程噪声设置】选用相对保守稳定的15维过程噪声标准差
 Q_sigmas_15d = [ ...
-    0.001 * ones(1,3), ... % 位置过程噪声标准差
-    0.001 * ones(1,3), ... % 速度过程噪声标准差
-    0.002 * ones(1,3), ... % 加速度过程噪声标准差
-    0.0002 * ones(1,3), ... % 姿态(旋转)过程噪声标准差
-    0.0005 * ones(1,3)  ... % 角速度过程噪声标准差
+    0.0005 * ones(1,3), ... % 位置过程噪声标准差
+    0.0005 * ones(1,3), ... % 速度过程噪声标准差
+    0.001 * ones(1,3), ... % 加速度过程噪声标准差
+    0.0001 * ones(1,3), ... % 姿态(旋转)过程噪声标准差
+    0.00025 * ones(1,3)  ... % 角速度过程噪声标准差
 ];
+
+
+
 Q_15d = diag(Q_sigmas_15d.^2);
 
 % 实例化各车的估值器
@@ -76,13 +79,13 @@ for n = 1:Vehicle_num
     init_state.R = R_init;
     init_state.omega = veh.omega_true(1, :)';
     
-    % 初始状态协方差矩阵 (对角小矩阵防初始逆奇异)
+    % 初始状态协方差矩阵
     init_cov = diag([ ...
         0.01 * ones(1,3), ... % 位置
         0.01 * ones(1,3), ... % 速度
-        0.01 * ones(1,3), ... % 加速度偏置
-        0.001 * ones(1,3), ... % 姿态
-        0.001 * ones(1,3)  ... % 角速度偏置
+        0.005 * ones(1,3), ... % 加速度
+        (1*pi/180) * ones(1,3), ... % 姿态
+        0.005 * ones(1,3)  ... % 角速度
     ]);
     
     % IMU测量白噪声协方差
@@ -123,18 +126,18 @@ for k = 1:N_steps
     
     % B. 执行高频局部惯性积分与 IMU 局部滤波更新 (100Hz)
     for n = 1:Vehicle_num
-        % 1. 先验状态与信息分离算子传播
+        % 1. 先验状态与分裂协方差传播
         filters{n} = filters{n}.predict();
         
-        % 2. 执行局部非线性最大似然滤波 (传入已去除Bias的修正IMU量)
+        % 2. 局部非线性最大似然滤波估计姿态与加速度
         filters{n} = filters{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3,1), zeros(3,1));
     end
     
-    % C. 执行低频分布式协同定位更新 (10Hz)
+    % C. 执行分布式协同定位 UWB 一致性滤波更新 (10Hz)
     if mod(k-1, uwb_downsample_factor) == 0
         k_uwb = (k-1)/uwb_downsample_factor + 1;
         
-        % Step C.1: 各车在发送端独立计算 3D 位置边缘化状态与分裂信息矩阵
+        % --- Step C.1: 各车独立边缘化，准备待广播的先验 3D 位置及分裂信息组件 ---
         p_est_shared = cell(Vehicle_num, 1);
         I_pos_indep_shared = cell(Vehicle_num, 1);
         I_pos_dep_shared = cell(Vehicle_num, 1);
@@ -143,80 +146,157 @@ for k = 1:N_steps
                 filters{n}.get_marginalized_position_info();
         end
         
-        % Step C.2: 各车严格在指定拓扑范围内接收数据并完成 ADMM 分布式更新
+        % --- Step C.2: 分布式一致性网络 ADMM 仿真架构 (在外层循环层级驱动) ---
+        max_admm_iter = 2;
+        rho = 1.4;
+        
+        % 新增：在开始本轮 ADMM 迭代前，重置所有车辆的拉格朗日乘子，保证切空间初值一致性
+        for n = 1:Vehicle_num
+            filters{n} = filters{n}.reset_dual_variables();
+        end
+
+        % 1. 为所有车辆初始化一阶误差状态
+        s_admm_all = cell(Vehicle_num, 1);
+        for n = 1:Vehicle_num
+            M = length(neighbors_map{n});
+            s_admm_all{n} = zeros(3 * (M + 1), 1);
+        end
+        
+        % 2. 各节点本地一致性状态分发缓冲容器
+        dp_neigh_neigh_all = cell(Vehicle_num, 1);
+        dp_neigh_self_all = cell(Vehicle_num, 1);
+        for n = 1:Vehicle_num
+            M = length(neighbors_map{n});
+            dp_neigh_neigh_all{n} = zeros(3, M);
+            dp_neigh_self_all{n} = zeros(3, M);
+        end
+        
+        % 3. 全局 ADMM 外层通信迭代开始
+        for admm_k = 1:max_admm_iter
+            s_admm_new = cell(Vehicle_num, 1);
+            
+            % Sub-Step 1: 所有车辆物理隔离，基于上一轮估计独立求解 Primal Update (内层GN)
+            for n = 1:Vehicle_num
+                v_name = sprintf('V%d', n);
+                veh = trajectories.(v_name);
+                
+                % 读取该车观测到的基站测距数据与视线
+                anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2:end)';
+                anchor_positions_veh = anchors(1:Anchor_num, :);
+                active_neighbors = neighbors_map{n};
+                M_neighbors = length(active_neighbors);
+                
+                relative_ranges = zeros(M_neighbors, 1);
+                neigh_positions = zeros(M_neighbors, 3);
+                
+                % 基站测距 NaN 净化防线
+                for a_idx = 1:length(anchor_ranges_raw)
+                    if isnan(anchor_ranges_raw(a_idx)) || isinf(anchor_ranges_raw(a_idx))
+                        anchor_ranges_raw(a_idx) = norm(p_est_shared{n} - anchor_positions_veh(a_idx, :)');
+                    end
+                end
+                
+                % 相对协同邻居测距/状态 NaN 净化防线
+                for idx = 1:M_neighbors
+                    nid = active_neighbors(idx);
+                    neigh_positions(idx, :) = p_est_shared{nid}';
+                    
+                    rel_val = veh.UWB_Relative(k_uwb, 1 + nid);
+                    if isnan(rel_val) || isinf(rel_val)
+                        rel_val = norm(p_est_shared{n} - p_est_shared{nid});
+                    end
+                    relative_ranges(idx) = rel_val;
+                end
+                
+                sigma_s = UWB_noise_params.sigma_anc;
+                sigma_z = UWB_noise_params.sigma_rel;
+                
+                % 各车本地调用求解器解算 Primal Update (Eq. 54)
+                s_admm_new{n} = filters{n}.solve_primal_public(s_admm_all{n}, ...
+                    anchor_ranges_raw, anchor_positions_veh, ...
+                    neigh_positions, relative_ranges, sigma_s, sigma_z, ...
+                    rho, active_neighbors, ...
+                    dp_neigh_neigh_all{n}, dp_neigh_self_all{n});
+            end
+            s_admm_all = s_admm_new;
+            
+            % Sub-Step 2: 真实通信网络拓扑交换 (提取邻车 Primal 更新值分发给本车)
+            for n = 1:Vehicle_num
+                active_neighbors = neighbors_map{n};
+                M_neighbors = length(active_neighbors);
+                for idx = 1:M_neighbors
+                    nid = active_neighbors(idx);
+                    
+                    % 邻车 nid 对自身的估计 (即该邻车 s_admm 的前3维)
+                    dp_neigh_neigh_all{n}(:, idx) = s_admm_all{nid}(1:3);
+                    
+                    % 邻居 nid 对本车 n 的估计 (需要检索车 n 在邻车 nid 的邻居列表中的索引槽位)
+                    idx_of_n_in_nid = find(neighbors_map{nid} == n);
+                    if ~isempty(idx_of_n_in_nid)
+                        % 邻车 nid 本地估计本车误差对应的槽位索引为 3*idx_of_n_in_nid + (1:3)
+                        dp_neigh_self_all{n}(:, idx) = s_admm_all{nid}(3 * idx_of_n_in_nid + (1:3));
+                    else
+                        dp_neigh_self_all{n}(:, idx) = s_admm_all{n}(1:3); % 降级异常拦截
+                    end
+                end
+            end
+            
+            % Sub-Step 3: 各车独立更新本地对偶乘子 (Eq. 56, 57)
+            for n = 1:Vehicle_num
+                active_neighbors = neighbors_map{n};
+                filters{n} = filters{n}.update_dual(s_admm_all{n}, ...
+                    active_neighbors, dp_neigh_neigh_all{n}, dp_neigh_self_all{n}, rho);
+            end
+        end
+        
+        % Step C.3: 全局ADMM收敛后，触发最终的信息融合与流形重回射更新
         for n = 1:Vehicle_num
             v_name = sprintf('V%d', n);
             veh = trajectories.(v_name);
-            
-            % 读取当前车到 5 基站测距
             anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2:end)';
             anchor_positions_veh = anchors(1:Anchor_num, :);
-            
-            % 严格按照环形双邻居拓扑映射邻车数据
             active_neighbors = neighbors_map{n};
             M_neighbors = length(active_neighbors);
             
+            relative_ranges = zeros(M_neighbors, 1);
             neigh_positions = zeros(M_neighbors, 3);
             neigh_I_indep = cell(M_neighbors, 1);
             neigh_I_dep = cell(M_neighbors, 1);
-            relative_ranges = zeros(M_neighbors, 1);
             
             for idx = 1:M_neighbors
                 nid = active_neighbors(idx);
-                
-                % 提取邻居投影状态与信息组件
                 neigh_positions(idx, :) = p_est_shared{nid}';
                 neigh_I_indep{idx} = I_pos_indep_shared{nid};
                 neigh_I_dep{idx} = I_pos_dep_shared{nid};
                 
-                % 提取当前车与该邻居的协同测距值
                 rel_val = veh.UWB_Relative(k_uwb, 1 + nid);
-                
-                % 协同测距NaN防御：若由于仿真噪声或遮挡发生NaN，以当前各自先验距离进行稳定兜底
                 if isnan(rel_val) || isinf(rel_val)
                     rel_val = norm(p_est_shared{n} - p_est_shared{nid});
                 end
                 relative_ranges(idx) = rel_val;
             end
             
-            % 基站测距NaN防御：
             for a_idx = 1:length(anchor_ranges_raw)
                 if isnan(anchor_ranges_raw(a_idx)) || isinf(anchor_ranges_raw(a_idx))
                     anchor_ranges_raw(a_idx) = norm(p_est_shared{n} - anchor_positions_veh(a_idx, :)');
                 end
             end
             
-            % 执行 DMLKF 分布式 ADMM + SCI 融合更新
             sigma_s = UWB_noise_params.sigma_anc;
             sigma_z = UWB_noise_params.sigma_rel;
             
-            filters{n} = filters{n}.update_uwb(anchor_ranges_raw, anchor_positions_veh, ...
-                                              active_neighbors, neigh_positions, ...
-                                              neigh_I_indep, neigh_I_dep, ...
-                                              relative_ranges, sigma_s, sigma_z);
+            % 提取收敛值，做 Schur 补 SCI 边际化最终融合
+            filters{n} = filters{n}.apply_uwb_update(s_admm_all{n}, ...
+                anchor_ranges_raw, anchor_positions_veh, ...
+                active_neighbors, neigh_positions, ...
+                neigh_I_indep, neigh_I_dep, ...
+                relative_ranges, sigma_s, sigma_z);
         end
     end
     
-    % D. 记录最终定位状态并拦截突发的 NaN 崩溃
+    % D. 记录最终定位状态
     for n = 1:Vehicle_num
         pos_est_dmlkf{n}(k, :) = filters{n}.state.p';
-        
-        % 数值防御：如果极端运动导致状态发散成 NaN，在此强行复位
-        if any(isnan(filters{n}.state.p)) || any(isinf(filters{n}.state.p))
-            v_name = sprintf('V%d', n);
-            veh_err = trajectories.(v_name);
-            
-            % 使用上一个合法步/真值硬复位
-            filters{n}.state.p = [veh_err.X_true(k); veh_err.Y_true(k); veh_err.Z_true(k)];
-            filters{n}.state.v = [veh_err.Vx_true(k); veh_err.Vy_true(k); veh_err.Vz_true(k)];
-            filters{n}.state.a = veh_err.a_true(k, :)';
-            
-            % 将不确定度重设为中等先验，防止滤波器崩溃
-            filters{n}.I_indep = eye(15) * 1.0; 
-            filters{n}.I_dep = zeros(15, 15);
-            
-            pos_est_dmlkf{n}(k, :) = filters{n}.state.p';
-        end
     end
 end
 fprintf('滤波解算主循环执行完毕。\n');
