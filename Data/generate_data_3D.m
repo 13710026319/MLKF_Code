@@ -1,9 +1,7 @@
-% =========================================================================
-% generate_data_3D.m (CMLKF 几何最优化版)
-% 3D多车(无人机行为) UWB/IMU 协同定位仿真数据生成脚本
+% generate_data_3D.m 
+% 3D多车 UWB/IMU 协同定位仿真数据生成脚本
 % 空间范围：20m x 40m x 8m (高度严格控制在 2m ~ 7m)
-% 优化重点：重构基站最大立体非对称拓扑，以及无人机群多高度层动态斜线协同轨迹
-% =========================================================================
+
 clc; clear; close all;
 
 %% 1. 全局参数设置与保存路径
@@ -55,7 +53,7 @@ end
 anchors = all_anchors_pool(1:Anchor_num, :);
 
 % 保存路径
-save_dir = 'E:\SE3_MLKF_Project\Data\Low_freq'; 
+save_dir = 'E:\SE3_MLKF_Project\Data'; 
 trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D_1.mat', Vehicle_num, Anchor_num);
    
 % 噪声参数

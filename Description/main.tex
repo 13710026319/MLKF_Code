@@ -1,0 +1,491 @@
+\documentclass[twocolumn,10pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{listings}
+\usepackage{geometry}
+
+% Page geometry setup
+\geometry{a4paper, margin=15mm}
+\setlength{\columnseprule}{0.4pt}
+% Simple and clean code style without frames, colors, or line numbers
+\lstset{
+    language=Matlab,
+    breaklines=true,
+    basicstyle=\small\ttfamily,
+    keywordstyle=\bfseries,
+    commentstyle=\ttfamily,
+    stringstyle=\ttfamily,
+    showstringspaces=false,
+}
+
+\begin{document}
+
+\section{Architecture Description}
+The Matlab project code is structured into five primary folders: \texttt{Common}, \texttt{Data}, \texttt{Filter}, \texttt{Result}, and \texttt{Test}. Within the \texttt{Common} directory, there are two specialized subfolders: \texttt{Liegroup} and \texttt{Tools}.
+
+\section{Common Folder}
+\subsection{Liegroup Folder}
+
+\subsubsection{manifold\_add.m}
+\begin{lstlisting}
+function x_new = manifold_add(x_nominal, dx)
+    % MANIFOLD_ADD Generalized addition (Plus) operation on composite state manifold M
+    % Input: 
+    %   x_nominal - Nominal state struct containing:
+    %       .p: 3x1 position vector [1]
+    %       .v: 3x1 velocity vector [1]
+    %       .a: 3x1 acceleration vector [1]
+    %       .R: 3x3 SO(3) rotation matrix [1]
+    %       .omega: 3x1 angular velocity vector [1]
+    %   dx        - 15x1 error state vector [dp; dv; da; dphi; domega] [2]
+    % Output:
+    %   x_new     - Updated composite nominal state struct (corresponding to Eq 13)
+    
+    dp     = dx(1:3);
+    dv     = dx(4:6);
+    da     = dx(7:9);
+    dphi   = dx(10:12);
+    domega = dx(13:15);
+    
+    % Perform manifold direct sum update for each component
+    x_new.p     = x_nominal.p + dp;
+    x_new.v     = x_nominal.v + dv;
+    x_new.a     = x_nominal.a + da;
+    x_new.R     = x_nominal.R * so3_exp(dphi); % Right-multiply exponential map for retraction [2]
+    x_new.omega = x_nominal.omega + domega;
+end
+\end{lstlisting}
+
+\subsubsection{manifold\_sub.m}
+\begin{lstlisting}
+function dx = manifold_sub(x1, x2)
+    % MANIFOLD_SUB Generalized subtraction (Minus) operation on composite state manifold M (dx = x1 - x2)
+    % Input:
+    %   x1, x2 - Two composite state structs (each containing .p, .v, .a, .R, .omega)
+    % Output:
+    %   dx     - 15x1 tangent space error vector [dp; dv; da; dphi; domega] (corresponding to Eq 14)
+    
+    dp     = x1.p - x2.p;
+    dv     = x1.v - x2.v;
+    da     = x1.a - x2.a;
+    dphi   = so3_log(x2.R' * x1.R); % Rotation matrix subtraction (corresponding to log((R2)^T * R1)) [2]
+    domega = x1.omega - x2.omega;
+    
+    dx = [dp; dv; da; dphi; domega];
+end
+\end{lstlisting}
+
+\subsubsection{skew.m}
+\begin{lstlisting}
+function phi_hat = skew(phi)
+    % SKEW Compute the skew-symmetric matrix of a 3D vector
+    % Input: phi - 3x1 vector
+    % Output: phi_hat - 3x3 skew-symmetric matrix
+    
+    phi_hat = [      0, -phi(3),  phi(2);
+                phi(3),       0, -phi(1);
+               -phi(2),  phi(1),       0];
+end
+\end{lstlisting}
+
+\subsubsection{so3\_exp.m}
+\begin{lstlisting}
+function R = so3_exp(phi)
+    % SO3_EXP Exponential map for SO(3) group (Rodrigues' formula)
+    % Input: phi - 3x1 rotation vector (axis-angle)
+    % Output: R - 3x3 SO(3) rotation matrix (corresponding to Eq 12)
+    
+    theta = norm(phi);
+    phi_skew = skew(phi);
+    
+    if theta < 1e-6
+        % Taylor expansion approximation for small values
+        R = eye(3) + phi_skew;
+    else
+        R = eye(3) + (sin(theta) / theta) * phi_skew + ...
+            ((1 - cos(theta)) / (theta^2)) * (phi_skew^2);
+    end
+end
+\end{lstlisting}
+
+\subsubsection{so3\_inv\_right\_jacobian.m}
+\begin{lstlisting}
+function Jr_inv = so3_inv_right_jacobian(phi)
+    % SO3_INV_RIGHT_JACOBIAN Compute the inverse right Jacobian of SO(3)
+    % Input: phi - 3x1 rotation vector
+    % Output: Jr_inv - 3x3 inverse right Jacobian matrix (corresponding to Eq 54)
+    
+    theta = norm(phi);
+    phi_skew = skew(phi);
+    
+    if theta < 1e-6
+        % Limit approximation for small values (from cot(x) expansion cancellation)
+        coeff = 1/12;
+    else
+        coeff = 1 / (theta^2) - cot(theta/2) / (2 * theta);
+    end
+    
+    Jr_inv = eye(3) + 0.5 * phi_skew + coeff * (phi_skew^2);
+end
+\end{lstlisting}
+
+\subsubsection{so3\_log.m}
+\begin{lstlisting}
+function phi = so3_log(R)
+    % SO3_LOG Logarithmic map for SO(3) group
+    % Input: R - 3x3 SO(3) rotation matrix
+    % Output: phi - 3x1 rotation vector
+    
+    tr = trace(R);
+    val = (tr - 1) / 2;
+    val = max(-1, min(1, val)); % Numerical boundary truncation
+    theta = acos(val);
+    
+    R_diff = R - R';
+    if theta < 1e-6
+        phi = unskew(R_diff) / 2;
+    else
+        phi = (theta / (2 * sin(theta))) * unskew(R_diff);
+    end
+end
+\end{lstlisting}
+
+\subsubsection{so3\_right\_jacobian.m}
+\begin{lstlisting}
+function Jr = so3_right_jacobian(phi)
+    % SO3_RIGHT_JACOBIAN Compute the nominal right Jacobian of SO(3)
+    % Input: phi - 3x1 rotation vector
+    % Output: Jr - 3x3 right Jacobian matrix (corresponding to Eq 28)
+    
+    theta = norm(phi);
+    phi_skew = skew(phi);
+    
+    if theta < 1e-6
+        % Limit approximation for small values (first two terms of Rodrigues expansion)
+        Jr = eye(3) - 0.5 * phi_skew + (1/6) * (phi_skew^2);
+    else
+        Jr = eye(3) - ((1 - cos(theta)) / (theta^2)) * phi_skew + ...
+             ((theta - sin(theta)) / (theta^3)) * (phi_skew^2);
+    end
+end
+\end{lstlisting}
+
+\subsubsection{unskew.m}
+\begin{lstlisting}
+function phi = unskew(phi_hat)
+    % UNSKEW Extract 3D vector from 3x3 skew-symmetric matrix
+    % Input: phi_hat - 3x3 skew-symmetric matrix
+    % Output: phi - 3x1 vector
+    
+    phi = [phi_hat(3, 2); 
+           phi_hat(1, 3); 
+           phi_hat(2, 1)];
+end
+\end{lstlisting}
+
+\subsection{Tools Folder}
+
+\subsubsection{calculate\_position\_errors.m}
+\begin{lstlisting}
+function [errors, rmse] = calculate_position_errors(pos_est, pos_true)
+    % CALCULATE_POSITION_ERRORS Compute triaxial errors, Euclidean errors, and RMSE
+    % Input:
+    %   pos_est:  Cell array {Vehicle_num x 1}, each containing [N_steps x 3] estimated positions
+    %   pos_true: Cell array {Vehicle_num x 1}, each containing [N_steps x 3] true positions
+    % Output:
+    %   errors:   Struct array (1 x Vehicle_num), each element containing:
+    %       .axis_err: [N_steps x 3] triaxial position errors (X, Y, Z)
+    %       .euc_err:  [N_steps x 1] Euclidean distance errors
+    %   rmse:     Struct array (1 x Vehicle_num), each element containing:
+    %       .axis_rmse: [1 x 3] RMSE of triaxial positions
+    %       .euc_rmse:  [1 x 1] RMSE of Euclidean distance
+    Vehicle_num = length(pos_est);
+    
+    % Initialize output structures
+    errors = struct('axis_err', {}, 'euc_err', {});
+    rmse = struct('axis_rmse', {}, 'euc_rmse', {});
+    
+    for n = 1:Vehicle_num
+        % 1. Compute triaxial position errors (Estimated - True)
+        axis_err = pos_est{n} - pos_true{n};
+        
+        % 2. Compute Euclidean positioning errors
+        euc_err = sqrt(sum(axis_err.^2, 2));
+        
+        % Record error sequences
+        errors(n).axis_err = axis_err;
+        errors(n).euc_err = euc_err;
+        
+        % 3. Compute RMSE along triaxial directions [2]
+        axis_rmse = sqrt(mean(axis_err.^2, 1));
+        
+        % 4. Compute RMSE of Euclidean distance [2]
+        euc_rmse = sqrt(mean(euc_err.^2));
+        
+        % Record results
+        rmse(n).axis_rmse = axis_rmse;
+        rmse(n).euc_rmse = euc_rmse;
+    end
+end
+\end{lstlisting}
+
+\section{Data Folder}
+
+\subsection{generate\_data\_3D.m}
+\begin{lstlisting}
+% generate_data_3D.m 
+% 3D Multi-Agent UWB/IMU Cooperative Localization Simulation Data Script
+% Spatial Bounds: 20m x 40m x 8m (Altitude strictly limited to 2m ~ 7m)
+clc; clear; close all;
+%% 1. Global Parameter Configurations and Saving Path
+F_imu = 100;                % Desired IMU sampling frequency (Hz), e.g., 100 or 10
+F_uwb = 10;                 % Desired UWB sampling frequency (Hz), e.g., 10 or 1
+dt_imu = 1 / F_imu;        % Auto-calculate IMU step size
+dt_uwb = 1 / F_uwb;        % Auto-calculate UWB step size
+uwb_downsample_factor = round(dt_uwb / dt_imu); 
+if mod(dt_uwb, dt_imu) ~= 0
+    error('Warning: UWB sampling period must be an integer multiple of IMU sampling period!');
+end
+t_end = 300;                % Simulation duration (seconds)
+N_steps = round(t_end / dt_imu) + 1; % 30001 sampling points
+Vehicle_num = 4;            % Total number of vehicles
+Anchor_num = 8;             % Total number of anchors
+% Anchors heights are distributed within 0~8m to maximize non-coplanar asymmetry
+% Total pool of 18 optimal 3D anchor configurations
+all_anchors_pool = [
+     0,  0, 0;      % 1  (Base 4 anchors)
+    20,  0, 7.5;    % 2
+    20, 40, 0;      % 3
+     0, 40, 7.5;    % 4
+     0, 40, 0;      % 5  (Added for 5 anchors)
+    20,  0, 7.5;    % 6  (Added for 6 anchors)
+    20, 40, 7.5;    % 7  (Added for 7 anchors)
+    20,  0, 0;      % 8  (Added for 8 anchors)
+     0, 20, 0;      % 9  (Added for 9 anchors)
+    20, 20, 0;      % 10 (Added for 10 anchors)
+     0, 20, 7.5;    % 11 (Added for 11 anchors)
+    20, 20, 7.5;    % 12 (Added for 12 anchors)
+    20, 30, 7.5;    % 13 (Added for 13 anchors)
+     0, 10, 0;      % 14 (Added for 14 anchors)
+    20, 30, 0;      % 15 (Added for 15 anchors)
+     0, 30, 7.5;    % 16 (Added for 16 anchors)
+     0, 30, 0;      % 17 (Added for 17 anchors)
+    20, 33, 0;      % 18 (Added for 18 anchors)
+    10, 0, 7.5;     % 19 (Added for 19 anchors)
+    10, 0, 0;       % 20 (Added for 20 anchors)
+];
+if Anchor_num > size(all_anchors_pool, 1) || Anchor_num < 4
+    error('Input Anchor_num exceeds the predefined pool size. Please check!');
+end
+anchors = all_anchors_pool(1:Anchor_num, :);
+% Storage Directory
+save_dir = 'E:\SE3_MLKF_Project\Data'; 
+trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D_1.mat', Vehicle_num, Anchor_num);
+   
+% Noise Specifications
+IMU_noise_params.sigma_na = 0.03;      
+IMU_noise_params.sigma_nw = 0.003;     
+IMU_noise_params.sigma_ba = 0.001;     
+IMU_noise_params.sigma_bw = 0.0001;    
+UWB_noise_params.sigma_anc = 0.3;     
+UWB_noise_params.sigma_rel = 0.3;  
+%% 2. Individual Vehicle Kinematics Planning (3s smooth in-place turn + 3D slant flight)
+% Initial state configuration: [X, Y, Z, initial speed, initial heading angle]
+% Altitudes are bounded within 2m ~ 7m, occupying distinct altitude layers
+init_configs = [
+    3,   5,  2.5,  0.10,  0;      % V1: Low layer (2.5m), south, heading East, then turn North
+   17,   3,  6.5,  0.10,  pi;     % V2: High layer (6.5m), south, heading West, then turn North
+    3,  39,  3.8,  0.10,  0;      % V3: Mid-low layer (3.8m), north, heading East, then turn South
+   18,  35,  5.2,  0.10,  pi;     % V4: Mid-high layer (5.2m), north, heading West, then turn South
+];
+trajectories = struct();
+for n = 1:Vehicle_num
+    v_name = sprintf('V%d', n);
+    cfg = init_configs(n, :);
+    
+    P_true = zeros(N_steps, 3);
+    V_true = zeros(N_steps, 3);
+    A_true = zeros(N_steps, 3);
+    Theta_true = zeros(N_steps, 1);
+    
+    % Initial conditions
+    P_true(1, :) = cfg(1:3);
+    v_mag = cfg(4);
+    th_curr = cfg(5);
+    V_true(1, :) = [v_mag * cos(th_curr), v_mag * sin(th_curr), 0];
+    Theta_true(1) = th_curr;
+    
+    % Calculate time window for the turning phase
+    t_turn_start = 120 + (n-1)*15; % Staggered turn start: V1:120s, V2:135s, V3:150s, V4:165s
+    t_turn_end = t_turn_start + 3;
+    
+    for k = 2:N_steps
+        t = (k-1) * dt_imu;
+        a_curr = [0; 0; 0]; % Default Z-axis acceleration is zero throughout
+        th_curr = Theta_true(k-1);
+        
+        switch n
+            case 1  % V1: Constant altitude 2.5m. Eastbound cruise -> 120s in-place left turn -> Northbound cruise
+                if t < t_turn_start
+                    th_curr = 0; a_curr = [0; 0; 0];
+                elseif t >= t_turn_start && t <= t_turn_end
+                    a_curr = [0; 0; 0]; V_true(k-1, 1:2) = 0; % In-place turn, set horizontal speed to zero
+                    th_curr = 0 + (pi/2)/3 * (t - t_turn_start); % Smooth 90-deg left turn within 3 seconds
+                elseif t > t_turn_end && t <= t_turn_end + 10
+                    th_curr = pi/2; a_curr = [0; 0.01; 0]; % Accelerate horizontally for 10s after turn
+                else
+                    th_curr = pi/2; a_curr = [0; 0; 0];    % Constant cruise North
+                end
+                
+            case 2  % V2: Constant altitude 6.5m. Westbound cruise -> 135s in-place right turn -> Northbound cruise
+                if t < t_turn_start
+                    th_curr = pi; a_curr = [0; 0; 0];
+                elseif t >= t_turn_start && t <= t_turn_end
+                    a_curr = [0; 0; 0]; V_true(k-1, 1:2) = 0;
+                    th_curr = pi - (pi/2)/3 * (t - t_turn_start); % Smooth 90-deg right turn within 3 seconds
+                elseif t > t_turn_end && t <= t_turn_end + 10
+                    th_curr = pi/2; a_curr = [0; 0.01; 0]; % Accelerate horizontally for 10s after turn
+                else
+                    th_curr = pi/2; a_curr = [0; 0; 0];
+                end
+                
+            case 3  % V3: Constant altitude 3.8m. Eastbound cruise -> 150s in-place right turn -> Southbound cruise
+                if t < t_turn_start
+                    th_curr = 0; a_curr = [0; 0; 0];
+                elseif t >= t_turn_start && t <= t_turn_end
+                    a_curr = [0; 0; 0]; V_true(k-1, 1:2) = 0;
+                    th_curr = 0 - (pi/2)/3 * (t - t_turn_start); % Smooth 90-deg right turn within 3 seconds
+                elseif t > t_turn_end && t <= t_turn_end + 10
+                    th_curr = -pi/2; a_curr = [0; -0.01; 0]; % Accelerate horizontally for 10s after turn
+                else
+                    th_curr = -pi/2; a_curr = [0; 0; 0];
+                end
+                
+            case 4  % V4: Constant altitude 5.2m. Westbound cruise -> 165s in-place left turn -> Southbound cruise
+                if t < t_turn_start
+                    th_curr = pi; a_curr = [0; 0; 0];
+                elseif t >= t_turn_start && t <= t_turn_end
+                    a_curr = [0; 0; 0]; V_true(k-1, 1:2) = 0;
+                    th_curr = pi + (pi/2)/3 * (t - t_turn_start); % Smooth 90-deg left turn within 3 seconds
+                elseif t > t_turn_end && t <= t_turn_end + 10
+                    th_curr = 3*pi/2; a_curr = [0; -0.01; 0]; % Accelerate horizontally for 10s after turn
+                else
+                    th_curr = 3*pi/2; a_curr = [0; 0; 0];
+                end
+        end
+        
+        % Numerical Integration
+        A_true(k-1, :) = a_curr';
+        V_true(k, :)   = V_true(k-1, :) + A_true(k-1, :) * dt_imu;
+        P_true(k, :)   = P_true(k-1, :) + V_true(k-1, :) * dt_imu + 0.5 * A_true(k-1, :) * dt_imu^2;
+        Theta_true(k)  = th_curr;
+    end
+    A_true(end, :) = [0, 0, 0];
+    % Save Ground Truth Elements
+    trajectories.(v_name).Time_true = (0:dt_imu:t_end)';
+    trajectories.(v_name).X_true = P_true(:, 1);
+    trajectories.(v_name).Y_true = P_true(:, 2);
+    trajectories.(v_name).Z_true = P_true(:, 3);
+    trajectories.(v_name).Vx_true = V_true(:, 1);
+    trajectories.(v_name).Vy_true = V_true(:, 2);
+    trajectories.(v_name).Vz_true = V_true(:, 3);
+    trajectories.(v_name).Theta_true = Theta_true;
+    
+    % True Rotation Matrix Sequence R_true
+    R_true = zeros(3, 3, N_steps);
+    for k = 1:N_steps
+        th = Theta_true(k);
+        R_true(:, :, k) = [
+            cos(th), -sin(th), 0;
+            sin(th),  cos(th), 0;
+            0,        0,       1
+        ];
+    end
+    trajectories.(v_name).R_true = R_true;
+end
+%% 3. Generate 100Hz 3D IMU Measurements with Bias and White Noise
+for n = 1:Vehicle_num
+    v_name = sprintf('V%d', n);
+    veh = trajectories.(v_name);
+    
+    % Compute ideal 3D angular velocity
+    theta_unwrapped = unwrap(veh.Theta_true);
+    wz_true = gradient(theta_unwrapped, dt_imu);
+    omega_body_ideal = [zeros(N_steps, 2), wz_true];
+    
+    % Compute ideal specific force: f = R^T * (a - g)
+    a_body_ideal = zeros(N_steps, 3);
+    g_vec = [0; 0; -9.81];
+    for k = 1:N_steps
+        R_k = veh.R_true(:, :, k);
+        a_world = [A_true(k, 1); A_true(k, 2); A_true(k, 3)];
+        a_body_ideal(k, :) = (R_k' * (a_world - g_vec))';
+    end
+    
+    % Simulate high-fidelity bias random walk
+    ba_init = (rand(1, 3) - 0.5) * 0.1;    
+    bw_init = (rand(1, 3) - 0.5) * 0.01;
+    b_a = ba_init + cumsum(randn(N_steps, 3) * IMU_noise_params.sigma_ba * sqrt(dt_imu), 1);
+    b_w = bw_init + cumsum(randn(N_steps, 3) * IMU_noise_params.sigma_bw * sqrt(dt_imu), 1);
+    
+    % Superimpose sensor white noise
+    acc_noise = randn(N_steps, 3) * IMU_noise_params.sigma_na;
+    gyro_noise = randn(N_steps, 3) * IMU_noise_params.sigma_nw;
+    
+    acc_m = a_body_ideal + b_a + acc_noise;
+    gyro_m = omega_body_ideal + b_w + gyro_noise;
+    
+    % Save generated IMU measurements
+    trajectories.(v_name).IMU_Time = veh.Time_true;
+    trajectories.(v_name).IMU_acc_m = acc_m;
+    trajectories.(v_name).IMU_gyro_m = gyro_m;
+    trajectories.(v_name).IMU_bias_a_true = b_a;
+    trajectories.(v_name).IMU_bias_w_true = b_w;
+end
+%% 4. Generate 10Hz Synchronous UWB Range Measurements
+idx_uwb = 1:uwb_downsample_factor:N_steps;
+t_uwb = trajectories.V1.Time_true(idx_uwb);
+N_uwb = length(t_uwb);
+pos_true_uwb = zeros(N_uwb, 3, Vehicle_num);
+for n = 1:Vehicle_num
+    v_name = sprintf('V%d', n);
+    pos_true_uwb(:, 1, n) = trajectories.(v_name).X_true(idx_uwb);
+    pos_true_uwb(:, 2, n) = trajectories.(v_name).Y_true(idx_uwb);
+    pos_true_uwb(:, 3, n) = trajectories.(v_name).Z_true(idx_uwb);
+end
+for n = 1:Vehicle_num
+    v_name = sprintf('V%d', n);
+    
+    % A. UWB Anchor-to-Vehicle 3D Range Measurement
+    UWB_Anchor = zeros(N_uwb, 1 + Anchor_num);
+    UWB_Anchor(:, 1) = t_uwb;
+    for a_idx = 1:Anchor_num
+        dx = pos_true_uwb(:, 1, n) - anchors(a_idx, 1);
+        dy = pos_true_uwb(:, 2, n) - anchors(a_idx, 2);
+        dz = pos_true_uwb(:, 3, n) - anchors(a_idx, 3);
+        dist_true = sqrt(dx.^2 + dy.^2 + dz.^2);
+        
+        UWB_Anchor(:, 1 + a_idx) = dist_true + randn(N_uwb, 1) * UWB_noise_params.sigma_anc;
+    end
+    trajectories.(v_name).UWB_Anchor = UWB_Anchor;
+    
+    % B. UWB Inter-Vehicle Relative Range Measurement
+    UWB_Relative = zeros(N_uwb, 1 + Vehicle_num);
+    UWB_Relative(:, 1) = t_uwb;
+    for j = 1:Vehicle_num
+        if n == j
+            UWB_Relative(:, 1 + j) = NaN;
+        else
+            dx = pos_true_uwb(:, 1, n) - pos_true_uwb(:, 1, j);
+            dy = pos_true_uwb(:, 2, n) - pos_true_uwb(:, 2, j);
+            dz = pos_true_uwb(:, 3, n) - pos_true_uwb(:, 3, j);
+            dist_true = sqrt(dx.^2 + dy.^2 + dz.^2);
+            
+            UWB_Relative(:, 1 + j) = dist_true + randn(N_uwb, 1) * UWB_noise_params.sigma_rel;
+        end
+    end
+    trajectories.(v_name).UWB_Relative = UWB_Relative;
+end
+\end{lstlisting}
+
+\end{document}
