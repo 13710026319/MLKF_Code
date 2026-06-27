@@ -13,6 +13,7 @@ classdef DMLKF
         g_vec           % 3x1 重力向量 (通常为 [0; 0; -9.81])
         tau             % IMU采样周期 (秒)
         mu              % 高斯-牛顿正则化参数 (防御NaN)
+        omega_self      % 本车SCI权重
         
         % ADMM 持久化对偶变量 (用于热启动，持久化保持可以加速外层ADMM收敛)
         lambda_local    % Map 容器: 存储该车对邻车的拉格朗日乘子 (Key: 邻车ID -> Value: 3x1 乘子)
@@ -21,7 +22,7 @@ classdef DMLKF
     
     methods
         %% 构造函数
-        function obj = DMLKF(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau)
+        function obj = DMLKF(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, omega_self)
             obj.id = id;
             obj.state = init_state;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
@@ -37,6 +38,7 @@ classdef DMLKF
             obj.tau = tau;
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5; % 防止GN迭代中Hessian退化
+            obj.omega_self = omega_self;
             
             obj.lambda_local = containers.Map('KeyType', 'double', 'ValueType', 'any');
             obj.lambda_remote = containers.Map('KeyType', 'double', 'ValueType', 'any');
@@ -439,8 +441,7 @@ classdef DMLKF
             end
             
             % --- 3.3 基于 SCI 的舒尔补边缘化 ---
-            omega_self = 0.8;
-            omega_neigh = 0.2 / M; 
+            omega_neigh = (1-obj.omega_self) / M; 
             
             P22_SCI_inv = zeros(3 * M, 3 * M);
             s_neigh_mle = zeros(3 * M, 1);
@@ -476,7 +477,7 @@ classdef DMLKF
             
             % 更新分裂信息矩阵独立组件与相关组件 (Eq. 80, 81)
             obj.I_indep = obj.sanitize_matrix(obj.I_indep + Lambda_anc_full);
-            obj.I_dep = obj.sanitize_matrix(omega_self * obj.I_dep + Lambda_int_full);
+            obj.I_dep = obj.sanitize_matrix(obj.omega_self * obj.I_dep + Lambda_int_full);
             
             % 后验增量解算并回射状态 (Eq. 82-84)
             Sigma_post = obj.safe_inv(obj.I_indep + obj.I_dep);
