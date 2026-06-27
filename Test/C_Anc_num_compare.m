@@ -16,7 +16,7 @@ N_anc_tests = length(Anc_list);
 
 % 结果保存路径与文件名配置
 save_dir = 'E:\SE3_MLKF\Result';
-save_name = 'CAlogrithm_Anchor_num_compare.mat';
+save_name = 'C_Anc_num_4V_compare.mat';
 save_path = fullfile(save_dir, save_name);
 
 % 智能检测：如果历史评测数据已存在，直接跳过计算进入绘图
@@ -40,7 +40,7 @@ if ~jump_to_plot
         fprintf('\n>>> 当前评测数据集基站数量: %d <<<\n', anc_num);
         
         % A. 自动检测并加载数据集
-        data_file = sprintf('E:\\SE3_MLKF\\Data\\Trj_data_Veh4_Anc%d_3D.mat', anc_num);
+        data_file = sprintf('E:\\SE3_MLKF\\Data\\diff_Anc_4V\\Trj_data_Veh4_Anc%d_3D.mat', anc_num);
         if ~exist(data_file, 'file')
             data_file = sprintf('../Data/Trj_data_Veh4_Anc%d_3D.mat', anc_num); 
             if ~exist(data_file, 'file')

@@ -8,7 +8,7 @@
 	addpath(genpath('../Filter'));
 	addpath(genpath('../Data'));
 	% 指定的仿真数据集路径 (你可以在此处修改为你要测试的具体车辆数数据集)
-	data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh12_Anc6_3D.mat';
+	data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh6_Anc6_3D.mat';
 	if ~exist(data_file, 'file')
 	    data_file = '../Data/Trj_data_Veh4_Anc4_2D.mat'; % 相对路径备用
 	    if ~exist(data_file, 'file')
@@ -58,14 +58,14 @@
 	    (0.005)^2 * ones(1, 3) ...     % 角速度状态不确定度
 	]);
 	init_P = kron(eye(Vehicle_num), P_n_init);
-	% 设定动力学系统过程噪声标准差 (对应 w_t^i, 文档 1.1 节) [1]
-	Q_sigmas.sig_wp     = 0;  % 位置过程噪声
-	Q_sigmas.sig_wv     = 0;  % 速度过程噪声
-	Q_sigmas.sig_wa     = 0.0005;   % 加速度随机游走
-	Q_sigmas.sig_wR     = 0.00005;  % 姿态随机游走
-	Q_sigmas.sig_womega = 0.00005;  % 角速度随机游走
+
+    Q_sigmas_15d.sig_wp      = 0.0001;  
+    Q_sigmas_15d.sig_wv      = 0.001;  
+    Q_sigmas_15d.sig_wa      = 0.00025; 
+    Q_sigmas_15d.sig_wR      = 0.0001;  
+    Q_sigmas_15d.sig_womega  = 0.00025;
 	% 实例化新版 CMLKF
-	filter = CMLKF(init_states, init_P, Q_sigmas);
+	filter = CMLKF(init_states, init_P, Q_sigmas_15d);
 	%% 4. 执行滤波主循环
 	pos_est = cell(Vehicle_num, 1);
 	for n = 1:Vehicle_num

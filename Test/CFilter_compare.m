@@ -10,7 +10,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\Trj_data_Veh4_Anc7_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\diff_Anc_4V\Trj_data_Veh4_Anc6_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc4_3D.mat'; 
     if ~exist(data_file, 'file')
@@ -64,13 +64,11 @@ P_n_init_15d = diag([ ...
 ]);
 init_P_15d = kron(eye(Vehicle_num), P_n_init_15d);
 
-Q_sigmas_15d.sig_wp      = 0;  
-Q_sigmas_15d.sig_wv      = 0;  
-Q_sigmas_15d.sig_wa      = 0.0005; 
-Q_sigmas_15d.sig_wR      = 0.00005;  
-Q_sigmas_15d.sig_womega = 0.00005;
-
-
+Q_sigmas_15d.sig_wp      = 0.0001;  
+Q_sigmas_15d.sig_wv      = 0.001;  
+Q_sigmas_15d.sig_wa      = 0.00025; 
+Q_sigmas_15d.sig_wR      = 0.0001;  
+Q_sigmas_15d.sig_womega  = 0.00025;
 % B. 为 9 维经典算法组 (EKF) 初始化标称状态与协方差 [1.1.5]
 init_states_9d = struct('p', {}, 'v', {}, 'R', {});
 for n = 1:Vehicle_num

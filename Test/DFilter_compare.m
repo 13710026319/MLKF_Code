@@ -8,7 +8,7 @@
 	addpath(genpath('../Common'));
 	addpath(genpath('../Filter'));
 	addpath(genpath('../Data'));
-	data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh12_Anc6_3D.mat';
+	data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh8_Anc6_3D.mat';
 	if ~exist(data_file, 'file')
 	    data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat'; 
 	    if ~exist(data_file, 'file')
@@ -38,9 +38,9 @@
 	%% 3. 初始化分布式 DMLKF 状态估值器
 	% A. 【过程噪声设置】选用相对保守稳定的15维过程噪声标准差
 	Q_sigmas_15d = [ ...
-	    0.0005 * ones(1,3), ... % 位置过程噪声标准差
-	    0.0005 * ones(1,3), ... % 速度过程噪声标准差
-	    0.001 * ones(1,3), ... % 加速度过程噪声标准差
+	    0.0001 * ones(1,3), ... % 位置过程噪声标准差
+	    0.001 * ones(1,3), ... % 速度过程噪声标准差
+	    0.00025 * ones(1,3), ... % 加速度过程噪声标准差
 	    0.0001 * ones(1,3), ... % 姿态(旋转)过程噪声标准差
 	    0.00025 * ones(1,3)  ... % 角速度过程噪声标准差
 	];
