@@ -87,8 +87,8 @@ if ~jump_to_plot
         P_n_init_15d = diag([ (0.01)^2*ones(1,3), (0.01)^2*ones(1,3), (0.05)^2*ones(1,3), (1*pi/180)^2*ones(1,3), (0.005)^2*ones(1,3) ]);
         init_P_15d = kron(eye(Vehicle_num), P_n_init_15d);
         
-        Q_sigmas_15d.sig_wp = 0; Q_sigmas_15d.sig_wv = 0;  
-        Q_sigmas_15d.sig_wa = 0.0005; Q_sigmas_15d.sig_wR = 0.00005; Q_sigmas_15d.sig_womega = 0.00005;
+        Q_sigmas_15d.sig_wp = 0.0001; Q_sigmas_15d.sig_wv = 0.001;  
+        Q_sigmas_15d.sig_wa = 0.00025; Q_sigmas_15d.sig_wR = 0.0001; Q_sigmas_15d.sig_womega = 0.00025;
     
         % (2) 9维 EKF/IEKF 标称状态
         init_states_9d = struct('p', {}, 'v', {}, 'R', {});
@@ -103,7 +103,7 @@ if ~jump_to_plot
         init_P_9d = kron(eye(Vehicle_num), P_n_init_9d);
         
         % (3) 分布式 DMLKF 独立实例化准备
-        Q_sigmas_dmlkf = [0.0005*ones(1,3), 0.0005*ones(1,3), 0.001*ones(1,3), 0.0001*ones(1,3), 0.00025*ones(1,3)];
+        Q_sigmas_dmlkf = [0.0001*ones(1,3), 0.001*ones(1,3), 0.00025*ones(1,3), 0.0001*ones(1,3), 0.00025*ones(1,3)];
         Q_15d_dmlkf = diag(Q_sigmas_dmlkf.^2);
         init_cov_dmlkf = diag([0.01*ones(1,3), 0.01*ones(1,3), 0.005*ones(1,3), (1*pi/180)*ones(1,3), 0.005*ones(1,3)]);
         Sigma_a = diag(IMU_noise_params.sigma_na.^2 * ones(1,3));
@@ -119,7 +119,7 @@ if ~jump_to_plot
             th0 = trajectories.(sprintf('V%d', n)).Theta_true(1);
             R_init = [cos(th0), -sin(th0), 0; sin(th0), cos(th0), 0; 0, 0, 1];
             dmlkf_state = struct('p', init_states_15d(n).p, 'v', init_states_15d(n).v, 'a', init_states_15d(n).a, 'R', R_init, 'omega', init_states_15d(n).omega);
-            filters_dmlkf{n} = DMLKF(n, dmlkf_state, init_cov_dmlkf, Q_15d_dmlkf, Sigma_a, Sigma_w, dt_imu);
+            filters_dmlkf{n} = DMLKF(n, dmlkf_state, init_cov_dmlkf, Q_15d_dmlkf, Sigma_a, Sigma_w, dt_imu, 0.8);
         end
         
         neighbors_map = { [2, 4], [1, 3], [2, 4], [3, 1] }; % 拓扑规则
