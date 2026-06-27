@@ -91,11 +91,11 @@ if ~jump_to_plot
         ]);
         init_P_15d = kron(eye(Vehicle_num), P_n_init_15d);
         
-        Q_sigmas_15d.sig_wp      = 0;  
-        Q_sigmas_15d.sig_wv      = 0;  
-        Q_sigmas_15d.sig_wa      = 0.0005; 
-        Q_sigmas_15d.sig_wR      = 0.00005;  
-        Q_sigmas_15d.sig_womega = 0.00005;
+        Q_sigmas_15d.sig_wp      = 0.0001;  
+        Q_sigmas_15d.sig_wv      = 0.001;  
+        Q_sigmas_15d.sig_wa      = 0.00025; 
+        Q_sigmas_15d.sig_wR      = 0.0001;  
+        Q_sigmas_15d.sig_womega  = 0.00025;
     
         
         % 9维 EKF/IEKF 标称状态与协方差
