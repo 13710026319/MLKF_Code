@@ -17,7 +17,7 @@ if ~exist(data_file, 'file')
         error('未检测到指定数据文件，请先运行 Data 下数据生成脚本！');
     end
 end
-load(data_file); % 加载获得 trajectories, anchors, IMU_noise_params, UWB_noise_params, Vehicle_num, Anchor_num
+load(data_file); % 加载获得 trajectories, anchors, IMU_noise_params, UWB_noise_params, Vehicle_num, Anchor_nu
 
 dt_imu = 0.01; % 100Hz 仿真步长 \tau [1]
 
