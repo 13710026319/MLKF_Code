@@ -30,12 +30,13 @@
 	    fprintf('未检测到历史数据，开始执行 4 算法多车数据集联合性能评测...\n');
 	end
 	%% 2. 核心评测循环
+    omega_self = 0.8;
 	if ~jump_to_plot
 	    for idx_veh = 1:N_veh_tests
 	        veh_num = Veh_list(idx_veh);
 	        fprintf('\n>>> 当前评测数据集车辆数量: %d <<<\n', veh_num);
 	        % A. 自动检测并加载数据集
-	        data_file = sprintf('E:\\SE3_MLKF\\Data\\diff_V_6Anc\\Trj_data_Veh%d_Anc6d_3D.mat', veh_num);
+	        data_file = sprintf('E:\\SE3_MLKF\\Data\\diff_V_6Anc\\Trj_data_Veh%d_Anc6_3D.mat', veh_num);
 	        if ~exist(data_file, 'file')
 	            error('未检测到指定数据集，请确认数据文件是否存在于：%s', data_file);
 	        end
@@ -100,7 +101,7 @@
 	            th0 = trajectories.(sprintf('V%d', n)).Theta_true(1);
 	            R_init = [cos(th0), -sin(th0), 0; sin(th0), cos(th0), 0; 0, 0, 1];
 	            dmlkf_state = struct('p', init_states_15d(n).p, 'v', init_states_15d(n).v, 'a', init_states_15d(n).a, 'R', R_init, 'omega', init_states_15d(n).omega);
-	            filters_dmlkf{n} = DMLKF(n, dmlkf_state, init_cov_dmlkf, Q_15d_dmlkf, Sigma_a, Sigma_w, dt_imu);
+	            filters_dmlkf{n} = DMLKF(n, dmlkf_state, init_cov_dmlkf, Q_15d_dmlkf, Sigma_a, Sigma_w, dt_imu, omega_self);
 	        end
 	        % 动态生成环形双向邻居通信拓扑 (1-2-3-...-N-1)
 	        neighbors_map = cell(Vehicle_num, 1);
