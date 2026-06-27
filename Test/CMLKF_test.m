@@ -11,7 +11,7 @@ addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
 % 指定的仿真数据集路径
-data_file = 'E:\SE3_MLKF\Data\Trj_data_Veh4_Anc11_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh4_Anc6_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc4_2D.mat'; % 相对路径备用
     if ~exist(data_file, 'file')
