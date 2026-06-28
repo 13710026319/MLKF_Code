@@ -1,6 +1,9 @@
 	% =========================================================================
 	% DFilter_compare.m (分布式多车协同定位评测脚本)
-	% 评测算法：Decentralized DMLKF (15D分布式极大似然卡尔曼滤波)
+	% 评测算法对比：
+	%   1. Decentralized DMLKF (15D - SCI融合 + 包含邻车状态联合ADMM优化)
+	%   2. Decentralized DMLKF_V1 (15D - SCI融合 + 无联合状态/无对偶迭代/协方差膨胀)
+	%   3. Decentralized DMLKF_V2 (15D - 纯CI融合 + 包含邻车状态联合ADMM优化)
 	% 数据拓扑规则：1 - 2 - 3 - ... - N - 1 动态环形双邻居分布式通信网络
 	% =========================================================================
 	clc; clear; close all;
@@ -8,7 +11,7 @@
 	addpath(genpath('../Common'));
 	addpath(genpath('../Filter'));
 	addpath(genpath('../Data'));
-	data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh8_Anc6_3D.mat';
+	data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh5_Anc6_3D.mat';
 	if ~exist(data_file, 'file')
 	    data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat'; 
 	    if ~exist(data_file, 'file')
@@ -35,7 +38,7 @@
 	    omega_true_matrix = [zeros(N_steps, 2), wz_true];
 	    trajectories.(v_name).omega_true = omega_true_matrix;
 	end
-	%% 3. 初始化分布式 DMLKF 状态估值器
+	%% 3. 初始化分布式 DMLKF, DMLKF_V1, DMLKF_V2 状态估值器
 	% A. 【过程噪声设置】选用相对保守稳定的15维过程噪声标准差
 	Q_sigmas_15d = [ ...
 	    0.0001 * ones(1,3), ... % 位置过程噪声标准差
@@ -46,12 +49,15 @@
 	];
 	Q_15d = diag(Q_sigmas_15d.^2);
 	% 实例化各车的估值器
-	filters = cell(Vehicle_num, 1);
-	pos_est_dmlkf = cell(Vehicle_num, 1);
-
-    % 自身SCI权重
-    omega_self = 0.8;
-
+	filters = cell(Vehicle_num, 1);       % 原始 DMLKF (SCI) 容器
+	filters_v1 = cell(Vehicle_num, 1);    % 基准 DMLKF_V1 (无联合) 容器
+	filters_v2 = cell(Vehicle_num, 1);    % DMLKF_V2 (纯CI融合) 容器
+	pos_est_dmlkf = cell(Vehicle_num, 1);    % DMLKF 定位结果
+	pos_est_dmlkf_v1 = cell(Vehicle_num, 1); % DMLKF_V1 定位结果
+	pos_est_dmlkf_v2 = cell(Vehicle_num, 1); % DMLKF_V2 定位结果
+	% 自身权重 (SCI和CI均使用该权重分配自身与邻居的比例)
+	omega_self_SCI = 0.8;
+    omega_self_CI  = 0.9;
 	for n = 1:Vehicle_num
 	    v_name = sprintf('V%d', n);
 	    veh = trajectories.(v_name);
@@ -78,10 +84,14 @@
 	    % IMU测量白噪声协方差
 	    Sigma_a = diag(IMU_noise_params.sigma_na.^2 * ones(1,3));
 	    Sigma_w = diag(IMU_noise_params.sigma_nw.^2 * ones(1,3));
-	    % 创建 DMLKF 对象
-	    filters{n} = DMLKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self);
+	    % 分别创建对象
+	    filters{n} = DMLKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_SCI);
+	    filters_v1{n} = DMLKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_SCI);
+	    filters_v2{n} = DMLKF_V2(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_CI);
 	    % 预分配定位结果空间
 	    pos_est_dmlkf{n} = zeros(N_steps, 3);
+	    pos_est_dmlkf_v1{n} = zeros(N_steps, 3);
+	    pos_est_dmlkf_v2{n} = zeros(N_steps, 3);
 	end
 	% B. 【全局通信拓扑规则】：动态环形双邻居网络 1-2-3-...-N-1
 	neighbors_map = cell(Vehicle_num, 1);
@@ -96,7 +106,7 @@
 	end
 	uwb_downsample_factor = 10; % 10步(10Hz)触发一次 UWB 分布式更新
 	%% 4. 主循环仿真系统 (100Hz 级高频驱动)
-	fprintf('启动 DMLKF 分布式估计主循环仿真实时评测...\n');
+	fprintf('启动 DMLKF, DMLKF_V1, DMLKF_V2 三方对比分布式估计主循环仿真评测...\n');
 	for k = 1:N_steps
 	    % 进度提示
 	    if mod(k, 5000) == 0
@@ -115,36 +125,55 @@
 	    end
 	    % B. 执行高频局部惯性积分与 IMU 局部滤波更新 (100Hz)
 	    for n = 1:Vehicle_num
-	        % 1. 先验状态与分裂协方差传播
+	        % 1. 原始 DMLKF
 	        filters{n} = filters{n}.predict();
-	        % 2. 局部非线性最大似然滤波估计姿态与加速度
 	        filters{n} = filters{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3,1), zeros(3,1));
+	        % 2. DMLKF_V1 基准
+	        filters_v1{n} = filters_v1{n}.predict();
+	        filters_v1{n} = filters_v1{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3,1), zeros(3,1));
+	        % 3. DMLKF_V2 纯CI版
+	        filters_v2{n} = filters_v2{n}.predict();
+	        filters_v2{n} = filters_v2{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3,1), zeros(3,1));
 	    end
-	    % C. 执行分布式协同定位 UWB 一致性滤波更新 (10Hz)
+	    % C. 执行分布式协同定位 UWB 滤波更新 (10Hz)
 	    if mod(k-1, uwb_downsample_factor) == 0
 	        k_uwb = (k-1)/uwb_downsample_factor + 1;
-	        % --- Step C.1: 各车独立边缘化，准备待广播的先验 3D 位置及分裂信息组件 ---
+	        % --- Step C.1: 独立边缘化，准备待广播的先验 3D 位置及信息组件 ---
+	        % DMLKF (SCI) 广播变量
 	        p_est_shared = cell(Vehicle_num, 1);
 	        I_pos_indep_shared = cell(Vehicle_num, 1);
 	        I_pos_dep_shared = cell(Vehicle_num, 1);
+	        % DMLKF_V1 广播变量
+	        p_est_shared_v1 = cell(Vehicle_num, 1);
+	        I_pos_indep_shared_v1 = cell(Vehicle_num, 1);
+	        I_pos_dep_shared_v1 = cell(Vehicle_num, 1);
+	        % DMLKF_V2 (CI) 广播变量
+	        p_est_shared_v2 = cell(Vehicle_num, 1);
+	        Sigma_pos_shared_v2 = cell(Vehicle_num, 1);
 	        for n = 1:Vehicle_num
+	            % DMLKF 边缘化
 	            [p_est_shared{n}, I_pos_indep_shared{n}, I_pos_dep_shared{n}] = ...
 	                filters{n}.get_marginalized_position_info();
+	            % DMLKF_V1 边缘化
+	            [p_est_shared_v1{n}, I_pos_indep_shared_v1{n}, I_pos_dep_shared_v1{n}] = ...
+	                filters_v1{n}.get_marginalized_position_info();
+	            % DMLKF_V2 边缘化
+	            [p_est_shared_v2{n}, Sigma_pos_shared_v2{n}] = ...
+	                filters_v2{n}.get_marginalized_position_info();
 	        end
-	        % --- Step C.2: 分布式一致性网络 ADMM 仿真架构 (在外层循环层级驱动) ---
+	        % =================================================================
+	        %   分支1: 原始 DMLKF (含联合邻车ADMM优化 + SCI融合)
+	        % =================================================================
 	        max_admm_iter = 2;
 	        rho = 1.4;
-	        % 新增：在开始本轮 ADMM 迭代前，重置所有车辆的拉格朗日乘子，保证切空间初值一致性
 	        for n = 1:Vehicle_num
 	            filters{n} = filters{n}.reset_dual_variables();
 	        end
-	        % 1. 为所有车辆初始化一阶误差状态
 	        s_admm_all = cell(Vehicle_num, 1);
 	        for n = 1:Vehicle_num
 	            M = length(neighbors_map{n});
 	            s_admm_all{n} = zeros(3 * (M + 1), 1);
 	        end
-	        % 2. 各节点本地一致性状态分发缓冲容器
 	        dp_neigh_neigh_all = cell(Vehicle_num, 1);
 	        dp_neigh_self_all = cell(Vehicle_num, 1);
 	        for n = 1:Vehicle_num
@@ -152,27 +181,21 @@
 	            dp_neigh_neigh_all{n} = zeros(3, M);
 	            dp_neigh_self_all{n} = zeros(3, M);
 	        end
-	        % 3. 全局 ADMM 外层通信迭代开始
 	        for admm_k = 1:max_admm_iter
 	            s_admm_new = cell(Vehicle_num, 1);
-	            % Sub-Step 1: 所有车辆物理隔离，基于上一轮估计独立求解 Primal Update (内层GN)
 	            for n = 1:Vehicle_num
-	                v_name = sprintf('V%d', n);
-	                veh = trajectories.(v_name);
-	                % 读取该车观测到的基站测距数据与视线
+	                v_name = sprintf('V%d', n); veh = trajectories.(v_name);
 	                anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2:end)';
 	                anchor_positions_veh = anchors(1:Anchor_num, :);
 	                active_neighbors = neighbors_map{n};
 	                M_neighbors = length(active_neighbors);
 	                relative_ranges = zeros(M_neighbors, 1);
 	                neigh_positions = zeros(M_neighbors, 3);
-	                % 基站测距 NaN 净化防线
 	                for a_idx = 1:length(anchor_ranges_raw)
 	                    if isnan(anchor_ranges_raw(a_idx)) || isinf(anchor_ranges_raw(a_idx))
 	                        anchor_ranges_raw(a_idx) = norm(p_est_shared{n} - anchor_positions_veh(a_idx, :)');
 	                    end
 	                end
-	                % 相对协同邻居测距/状态 NaN 净化防线
 	                for idx = 1:M_neighbors
 	                    nid = active_neighbors(idx);
 	                    neigh_positions(idx, :) = p_est_shared{nid}';
@@ -184,7 +207,6 @@
 	                end
 	                sigma_s = UWB_noise_params.sigma_anc;
 	                sigma_z = UWB_noise_params.sigma_rel;
-	                % 各车本地调用求解器解算 Primal Update (Eq. 54)
 	                s_admm_new{n} = filters{n}.solve_primal_public(s_admm_all{n}, ...
 	                    anchor_ranges_raw, anchor_positions_veh, ...
 	                    neigh_positions, relative_ranges, sigma_s, sigma_z, ...
@@ -192,35 +214,28 @@
 	                    dp_neigh_neigh_all{n}, dp_neigh_self_all{n});
 	            end
 	            s_admm_all = s_admm_new;
-	            % Sub-Step 2: 真实通信网络拓扑交换 (提取邻车 Primal 更新值分发给本车)
 	            for n = 1:Vehicle_num
 	                active_neighbors = neighbors_map{n};
 	                M_neighbors = length(active_neighbors);
 	                for idx = 1:M_neighbors
 	                    nid = active_neighbors(idx);
-	                    % 邻车 nid 对自身的估计 (即该邻车 s_admm 的前3维)
 	                    dp_neigh_neigh_all{n}(:, idx) = s_admm_all{nid}(1:3);
-	                    % 邻居 nid 对本车 n 的估计 (需要检索车 n 在邻车 nid 的邻居列表中的索引槽位)
 	                    idx_of_n_in_nid = find(neighbors_map{nid} == n);
 	                    if ~isempty(idx_of_n_in_nid)
-	                        % 邻车 nid 本地估计本车误差对应的槽位索引为 3*idx_of_n_in_nid + (1:3)
 	                        dp_neigh_self_all{n}(:, idx) = s_admm_all{nid}(3 * idx_of_n_in_nid + (1:3));
 	                    else
-	                        dp_neigh_self_all{n}(:, idx) = s_admm_all{n}(1:3); % 降级异常拦截
+	                        dp_neigh_self_all{n}(:, idx) = s_admm_all{n}(1:3);
 	                    end
 	                end
 	            end
-	            % Sub-Step 3: 各车独立更新本地对偶乘子
 	            for n = 1:Vehicle_num
 	                active_neighbors = neighbors_map{n};
 	                filters{n} = filters{n}.update_dual(s_admm_all{n}, ...
 	                    active_neighbors, dp_neigh_neigh_all{n}, dp_neigh_self_all{n}, rho);
 	            end
 	        end
-	        % Step C.3: 全局ADMM收敛后，触发最终的信息融合与流形重回射更新
 	        for n = 1:Vehicle_num
-	            v_name = sprintf('V%d', n);
-	            veh = trajectories.(v_name);
+	            v_name = sprintf('V%d', n); veh = trajectories.(v_name);
 	            anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2:end)';
 	            anchor_positions_veh = anchors(1:Anchor_num, :);
 	            active_neighbors = neighbors_map{n};
@@ -247,17 +262,157 @@
 	            end
 	            sigma_s = UWB_noise_params.sigma_anc;
 	            sigma_z = UWB_noise_params.sigma_rel;
-	            % 提取收敛值，做 Schur 补 SCI 边际化最终融合
 	            filters{n} = filters{n}.apply_uwb_update(s_admm_all{n}, ...
 	                anchor_ranges_raw, anchor_positions_veh, ...
 	                active_neighbors, neigh_positions, ...
 	                neigh_I_indep, neigh_I_dep, ...
 	                relative_ranges, sigma_s, sigma_z);
 	        end
+	        % =================================================================
+	        %   分支2: DMLKF_V1 (无联合状态/无迭代，测距噪声膨胀单步GN)
+	        % =================================================================
+	        for n = 1:Vehicle_num
+	            v_name = sprintf('V%d', n); veh = trajectories.(v_name);
+	            anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2:end)';
+	            anchor_positions_veh = anchors(1:Anchor_num, :);
+	            active_neighbors = neighbors_map{n};
+	            M_neighbors = length(active_neighbors);
+	            relative_ranges = zeros(M_neighbors, 1);
+	            neigh_positions = zeros(M_neighbors, 3);
+	            neigh_I_indep = cell(M_neighbors, 1);
+	            neigh_I_dep = cell(M_neighbors, 1);
+	            for idx = 1:M_neighbors
+	                nid = active_neighbors(idx);
+	                neigh_positions(idx, :) = p_est_shared_v1{nid}';
+	                neigh_I_indep{idx} = I_pos_indep_shared_v1{nid};
+	                neigh_I_dep{idx} = I_pos_dep_shared_v1{nid};
+	                rel_val = veh.UWB_Relative(k_uwb, 1 + nid);
+	                if isnan(rel_val) || isinf(rel_val)
+	                    rel_val = norm(p_est_shared_v1{n} - p_est_shared_v1{nid});
+	                end
+	                relative_ranges(idx) = rel_val;
+	            end
+	            for a_idx = 1:length(anchor_ranges_raw)
+	                if isnan(anchor_ranges_raw(a_idx)) || isinf(anchor_ranges_raw(a_idx))
+	                    anchor_ranges_raw(a_idx) = norm(p_est_shared_v1{n} - anchor_positions_veh(a_idx, :)');
+	                end
+	            end
+	            sigma_s = UWB_noise_params.sigma_anc;
+	            sigma_z = UWB_noise_params.sigma_rel;
+	            filters_v1{n} = filters_v1{n}.apply_uwb_update([], ...
+	                anchor_ranges_raw, anchor_positions_veh, ...
+	                active_neighbors, neigh_positions, ...
+	                neigh_I_indep, neigh_I_dep, ...
+	                relative_ranges, sigma_s, sigma_z);
+	        end
+	        % =================================================================
+	        %   分支3: DMLKF_V2 (含联合邻车ADMM优化 + 纯CI融合)
+	        % =================================================================
+	        for n = 1:Vehicle_num
+	            filters_v2{n} = filters_v2{n}.reset_dual_variables();
+	        end
+	        s_admm_all_v2 = cell(Vehicle_num, 1);
+	        for n = 1:Vehicle_num
+	            M = length(neighbors_map{n});
+	            s_admm_all_v2{n} = zeros(3 * (M + 1), 1);
+	        end
+	        dp_neigh_neigh_all_v2 = cell(Vehicle_num, 1);
+	        dp_neigh_self_all_v2 = cell(Vehicle_num, 1);
+	        for n = 1:Vehicle_num
+	            M = length(neighbors_map{n});
+	            dp_neigh_neigh_all_v2{n} = zeros(3, M);
+	            dp_neigh_self_all_v2{n} = zeros(3, M);
+	        end
+	        for admm_k = 1:max_admm_iter
+	            s_admm_new_v2 = cell(Vehicle_num, 1);
+	            for n = 1:Vehicle_num
+	                v_name = sprintf('V%d', n); veh = trajectories.(v_name);
+	                anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2:end)';
+	                anchor_positions_veh = anchors(1:Anchor_num, :);
+	                active_neighbors = neighbors_map{n};
+	                M_neighbors = length(active_neighbors);
+	                relative_ranges = zeros(M_neighbors, 1);
+	                neigh_positions = zeros(M_neighbors, 3);
+	                for a_idx = 1:length(anchor_ranges_raw)
+	                    if isnan(anchor_ranges_raw(a_idx)) || isinf(anchor_ranges_raw(a_idx))
+	                        anchor_ranges_raw(a_idx) = norm(p_est_shared_v2{n} - anchor_positions_veh(a_idx, :)');
+	                    end
+	                end
+	                for idx = 1:M_neighbors
+	                    nid = active_neighbors(idx);
+	                    neigh_positions(idx, :) = p_est_shared_v2{nid}';
+	                    rel_val = veh.UWB_Relative(k_uwb, 1 + nid);
+	                    if isnan(rel_val) || isinf(rel_val)
+	                        rel_val = norm(p_est_shared_v2{n} - p_est_shared_v2{nid});
+	                    end
+	                    relative_ranges(idx) = rel_val;
+	                end
+	                sigma_s = UWB_noise_params.sigma_anc;
+	                sigma_z = UWB_noise_params.sigma_rel;
+	                s_admm_new_v2{n} = filters_v2{n}.solve_primal_public(s_admm_all_v2{n}, ...
+	                    anchor_ranges_raw, anchor_positions_veh, ...
+	                    neigh_positions, relative_ranges, sigma_s, sigma_z, ...
+	                    rho, active_neighbors, ...
+	                    dp_neigh_neigh_all_v2{n}, dp_neigh_self_all_v2{n});
+	            end
+	            s_admm_all_v2 = s_admm_new_v2;
+	            for n = 1:Vehicle_num
+	                active_neighbors = neighbors_map{n};
+	                M_neighbors = length(active_neighbors);
+	                for idx = 1:M_neighbors
+	                    nid = active_neighbors(idx);
+	                    dp_neigh_neigh_all_v2{n}(:, idx) = s_admm_all_v2{nid}(1:3);
+	                    idx_of_n_in_nid = find(neighbors_map{nid} == n);
+	                    if ~isempty(idx_of_n_in_nid)
+	                        dp_neigh_self_all_v2{n}(:, idx) = s_admm_all_v2{nid}(3 * idx_of_n_in_nid + (1:3));
+	                    else
+	                        dp_neigh_self_all_v2{n}(:, idx) = s_admm_all_v2{n}(1:3);
+	                    end
+	                end
+	            end
+	            for n = 1:Vehicle_num
+	                active_neighbors = neighbors_map{n};
+	                filters_v2{n} = filters_v2{n}.update_dual(s_admm_all_v2{n}, ...
+	                    active_neighbors, dp_neigh_neigh_all_v2{n}, dp_neigh_self_all_v2{n}, rho);
+	            end
+	        end
+	        for n = 1:Vehicle_num
+	            v_name = sprintf('V%d', n); veh = trajectories.(v_name);
+	            anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2:end)';
+	            anchor_positions_veh = anchors(1:Anchor_num, :);
+	            active_neighbors = neighbors_map{n};
+	            M_neighbors = length(active_neighbors);
+	            relative_ranges = zeros(M_neighbors, 1);
+	            neigh_positions = zeros(M_neighbors, 3);
+	            neigh_Sigma_pos = cell(M_neighbors, 1);
+	            for idx = 1:M_neighbors
+	                nid = active_neighbors(idx);
+	                neigh_positions(idx, :) = p_est_shared_v2{nid}';
+	                neigh_Sigma_pos{idx} = Sigma_pos_shared_v2{nid};
+	                rel_val = veh.UWB_Relative(k_uwb, 1 + nid);
+	                if isnan(rel_val) || isinf(rel_val)
+	                    rel_val = norm(p_est_shared_v2{n} - p_est_shared_v2{nid});
+	                end
+	                relative_ranges(idx) = rel_val;
+	            end
+	            for a_idx = 1:length(anchor_ranges_raw)
+	                if isnan(anchor_ranges_raw(a_idx)) || isinf(anchor_ranges_raw(a_idx))
+	                    anchor_ranges_raw(a_idx) = norm(p_est_shared_v2{n} - anchor_positions_veh(a_idx, :)');
+	                end
+	            end
+	            sigma_s = UWB_noise_params.sigma_anc;
+	            sigma_z = UWB_noise_params.sigma_rel;
+	            filters_v2{n} = filters_v2{n}.apply_uwb_update(s_admm_all_v2{n}, ...
+	                anchor_ranges_raw, anchor_positions_veh, ...
+	                active_neighbors, neigh_positions, ...
+	                neigh_Sigma_pos, relative_ranges, sigma_s, sigma_z);
+	        end
 	    end
 	    % D. 记录最终定位状态
 	    for n = 1:Vehicle_num
 	        pos_est_dmlkf{n}(k, :) = filters{n}.state.p';
+	        pos_est_dmlkf_v1{n}(k, :) = filters_v1{n}.state.p';
+	        pos_est_dmlkf_v2{n}(k, :) = filters_v2{n}.state.p';
 	    end
 	end
 	fprintf('滤波解算主循环执行完毕。\n');
@@ -269,40 +424,54 @@
 	                   trajectories.(v_name).Y_true, ...
 	                   trajectories.(v_name).Z_true];
 	end
+	% 计算三种算法的位置误差与 RMSE
 	[errors_dmlkf, rmse_dmlkf] = calculate_position_errors(pos_est_dmlkf, pos_true);
-	% 组装分布式定位报表并显示
-	RowNames = cell(Vehicle_num, 1);
-	X_RMSE = zeros(Vehicle_num, 1);
-	Y_RMSE = zeros(Vehicle_num, 1);
-	Z_RMSE = zeros(Vehicle_num, 1);
-	Euc_RMSE = zeros(Vehicle_num, 1);
+	[errors_dmlkf_v1, rmse_dmlkf_v1] = calculate_position_errors(pos_est_dmlkf_v1, pos_true);
+	[errors_dmlkf_v2, rmse_dmlkf_v2] = calculate_position_errors(pos_est_dmlkf_v2, pos_true);
+	% 组装分布式定位对照报表并显示
+	RowNames = cell(Vehicle_num + 1, 1);
+	DMLKF_Euc_RMSE = zeros(Vehicle_num + 1, 1);
+	V1_Euc_RMSE = zeros(Vehicle_num + 1, 1);
+	V2_Euc_RMSE = zeros(Vehicle_num + 1, 1);
 	for n = 1:Vehicle_num
-	    RowNames{n} = sprintf('Vehicle_%d_DMLKF_15D', n);
-	    X_RMSE(n)   = rmse_dmlkf(n).axis_rmse(1);
-	    Y_RMSE(n)   = rmse_dmlkf(n).axis_rmse(2);
-	    Z_RMSE(n)   = rmse_dmlkf(n).axis_rmse(3);
-	    Euc_RMSE(n) = rmse_dmlkf(n).euc_rmse;
+	    RowNames{n} = sprintf('Vehicle_%d', n);
+	    DMLKF_Euc_RMSE(n) = rmse_dmlkf(n).euc_rmse;
+	    V1_Euc_RMSE(n)    = rmse_dmlkf_v1(n).euc_rmse;
+	    V2_Euc_RMSE(n)    = rmse_dmlkf_v2(n).euc_rmse;
 	end
-	rmse_report_table = table(X_RMSE, Y_RMSE, Z_RMSE, Euc_RMSE, 'RowNames', RowNames);
-	mean_euc_rmse = mean(Euc_RMSE);
-	fprintf('\n============================ DMLKF 算法性能评估对比表 (%d 基站) ============================\n', Anchor_num);
+	RowNames{Vehicle_num + 1} = 'Average';
+	DMLKF_Euc_RMSE(Vehicle_num + 1) = mean(DMLKF_Euc_RMSE(1:Vehicle_num));
+	V1_Euc_RMSE(Vehicle_num + 1)    = mean(V1_Euc_RMSE(1:Vehicle_num));
+	V2_Euc_RMSE(Vehicle_num + 1)    = mean(V2_Euc_RMSE(1:Vehicle_num));
+	rmse_report_table = table(DMLKF_Euc_RMSE, V1_Euc_RMSE, V2_Euc_RMSE, 'RowNames', RowNames);
+	fprintf('\n======================= DMLKF vs V1 vs V2 对照性能评估表 (%d 基站) =======================\n', Anchor_num);
 	disp(rmse_report_table);
-	fprintf('----------------------------------------------------------------------------------------\n');
-	fprintf('%d 辆车辆全局平均欧氏定位误差: %.4f m\n', Vehicle_num, mean_euc_rmse);
-	fprintf('========================================================================================\n');
-	%% 6. 绘制多车欧氏定位误差曲线
+	fprintf('-------------------------------------------------------------------------------------------------------------\n');
+	fprintf(' DMLKF    (SCI融合 + 含联合ADMM优化)    全局平均欧氏定位误差: %.4f m\n', DMLKF_Euc_RMSE(Vehicle_num + 1));
+	fprintf(' DMLKF_V1 (SCI融合 + 无联合邻车估计/GN) 全局平均欧氏定位误差: %.4f m\n', V1_Euc_RMSE(Vehicle_num + 1));
+	fprintf(' DMLKF_V2 (纯CI融合 + 含联合ADMM优化)   全局平均欧氏定位误差: %.4f m\n', V2_Euc_RMSE(Vehicle_num + 1));
+	improvement_v1 = (V1_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / V1_Euc_RMSE(Vehicle_num + 1) * 100;
+	improvement_v2 = (V2_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / V2_Euc_RMSE(Vehicle_num + 1) * 100;
+	fprintf(' [增益对比1] 相比V1，状态联合优化使整体定位精度提升了: %.2f%%\n', improvement_v1);
+	fprintf(' [增益对比2] 相比V2，SCI分裂融合使整体定位精度提升了: %.2f%%\n', improvement_v2);
+	fprintf('=============================================================================================================\n');
+	%% 6. 绘制多车欧氏定位误差对比曲线
 	time_arr = trajectories.V1.IMU_Time;
-	% 动态计算子图行列数以支持 4~12 车
 	n_rows = ceil(sqrt(Vehicle_num));
 	n_cols = ceil(Vehicle_num / n_rows);
-	figure('Name', 'Euclidean Position Errors for Distributed DMLKF', 'Position', [100, 100, 1000, 700]);
+	figure('Name', 'Euclidean Position Errors: DMLKF vs V1 vs V2', 'Position', [100, 100, 1200, 800]);
 	for n = 1:Vehicle_num
 	    subplot(n_rows, n_cols, n);
 	    hold on; grid on;
-	    % 绘制 DMLKF 的欧氏误差
+	    % 绘制 DMLKF 的欧氏误差 (黑色实线)
 	    plot(time_arr, errors_dmlkf(n).euc_err, 'k-', 'LineWidth', 1.5);
-	    title(sprintf('Vehicle %d Euclidean Error (DMLKF)', n));
+	    % 绘制 DMLKF_V1 的欧氏误差 (红色双虚线)
+	    plot(time_arr, errors_dmlkf_v1(n).euc_err, 'r--', 'LineWidth', 1.2);
+	    % 绘制 DMLKF_V2 的欧氏误差 (蓝色点划线)
+	    plot(time_arr, errors_dmlkf_v2(n).euc_err, 'b-.', 'LineWidth', 1.2);
+	    title(sprintf('Vehicle %d Euclidean Error', n));
 	    xlabel('Time (s)'); ylabel('Error (m)');
+	    legend('DMLKF (SCI+ADMM)', 'DMLKF\_V1 (No Joint)', 'DMLKF\_V2 (CI+ADMM)', 'Location', 'northeast');
 	    xlim([0, time_arr(end)]);
 	    ylim([0, 1.5]); 
 	    hold off;
