@@ -463,6 +463,14 @@ classdef DMLKF
             Lambda_t_anc = Xi_aa;
             Lambda_t_int = Xi_ii_11 - Xi_ii_12 * P22_temp_inv * Xi_ii_12';
             
+            % === 舒尔补加入正定保护机制 ===
+            Lambda_t_int = 0.5 * (Lambda_t_int + Lambda_t_int'); % 强制对称
+            [V_eig, D_eig] = eig(Lambda_t_int);
+            D_eig = diag(D_eig);
+            D_eig(D_eig < 1e-6) = 1e-6; % 将负特征值或极小值截断为一个极小正数
+            Lambda_t_int = V_eig * diag(D_eig) * V_eig';
+            % ==============================
+            
             % 边缘化信息向量 (Eq. 76, 77)
             s_self_mle = s_star(1:3);
             lambda_t_anc = Lambda_t_anc * s_self_mle;
