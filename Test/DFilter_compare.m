@@ -13,7 +13,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh8_Anc6_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh7_Anc6_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat'; 
     if ~exist(data_file, 'file')
@@ -24,19 +24,22 @@ load(data_file); % 载入 trajectories, anchors, IMU_noise_params, UWB_noise_par
 dt_imu = 0.01; % 100Hz 采样步长
 
 %% 一些超参数
-max_admm_iter = 2;
+    max_admm_iter = 2;
 
-SCI_rho = 0.8;           % DMLKF,DMLKF_V1
-CI_rho = 2;              % DMLKF_V2
+    SCI_rho = 0.8;           % DMLKF,DMLKF_V1
+    CI_rho = 2;              % DMLKF_V2
 
-omega_self_SCI = 0.8;    % DMLKF
-omega_self_SCI_V1 = 0.5; % DMLKF_V1
-omega_self_CI  = 0.9;    % DMLKF_V2
+    omega_self_SCI = 0.8;    % DMLKF
+    omega_self_SCI_V1 = 0.5; % DMLKF_V1
+    omega_self_CI_v2  = 0.9;    % DMLKF_V2
+    omega_self_CI_V3 = 0.9;  % DMLKF_V3 (CI+无联合)  
+    
+%% 算法运行开关 (Algorithm selection flags)
+    run_dmlkf    = 1;  % 原始 DMLKF (SCI+ADMM)
+    run_dmlkf_v1 = 1;  % 基准 DMLKF_V1 (SCI+No Joint)
+    run_dmlkf_v2 = 1;  % 基准 DMLKF_V2 (CI+ADMM)
+    run_dmlkf_v3 = 1;  % 新增基准 DMLKF_V3 (CI+No Joint) 
 
-%% 算法运行选择开关 (1 = 启用, 0 = 禁用)
-run_dmlkf    = 1;  % 是否运行 DMLKF (SCI + ADMM)
-run_dmlkf_v1 = 0;  % 是否运行 DMLKF_V1 (SCI + 无联合)
-run_dmlkf_v2 = 0;  % 是否运行 DMLKF_V2 (CI + ADMM)
 
 %% 2. 状态真值重建与偏置已知设定
 for n = 1:Vehicle_num
@@ -72,10 +75,12 @@ Q_15d = diag(Q_sigmas_15d.^2);
 filters = cell(Vehicle_num, 1);       % 原始 DMLKF (SCI) 容器
 filters_v1 = cell(Vehicle_num, 1);    % 基准 DMLKF_V1 (无联合) 容器
 filters_v2 = cell(Vehicle_num, 1);    % DMLKF_V2 (纯CI融合) 容器
+filters_v3 = cell(Vehicle_num, 1);    % DMLKF_V3 (纯CI融合,无联合) 容器
 
 pos_est_dmlkf = cell(Vehicle_num, 1);    % DMLKF 定位结果
 pos_est_dmlkf_v1 = cell(Vehicle_num, 1); % DMLKF_V1 定位结果
 pos_est_dmlkf_v2 = cell(Vehicle_num, 1); % DMLKF_V2 定位结果
+pos_est_dmlkf_v3 = cell(Vehicle_num, 1); % DMLKF_V3 定位结果
 
 for n = 1:Vehicle_num
     v_name = sprintf('V%d', n);
@@ -114,8 +119,12 @@ for n = 1:Vehicle_num
         pos_est_dmlkf_v1{n} = zeros(N_steps, 3);
     end
     if run_dmlkf_v2
-        filters_v2{n} = DMLKF_V2(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_CI);
+        filters_v2{n} = DMLKF_V2(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_CI_V2);
         pos_est_dmlkf_v2{n} = zeros(N_steps, 3);
+    end
+    if run_dmlkf_v3
+        filters_v3{n} = DMLKF_V3(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_CI_V3);
+        pos_est_dmlkf_v3{n} = zeros(N_steps, 3);
     end
 end
 
@@ -167,6 +176,11 @@ for k = 1:N_steps
             filters_v2{n} = filters_v2{n}.predict();
             filters_v2{n} = filters_v2{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3,1), zeros(3,1));
         end
+        % 4. DMLKF_V3 (CI+无联合) 
+        if run_dmlkf_v3
+            filters_v3{n} = filters_v3{n}.predict();
+            filters_v3{n} = filters_v3{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3,1), zeros(3,1));
+        end
     end
     
     % C. 执行分布式协同定位 UWB 滤波更新 (10Hz)
@@ -190,7 +204,12 @@ for k = 1:N_steps
             p_est_shared_v2 = cell(Vehicle_num, 1);
             Sigma_pos_shared_v2 = cell(Vehicle_num, 1);
         end
-        
+        % DMLKF_V3 (CI + No Joint) 广播变量
+        if run_dmlkf_v3
+            p_est_shared_v3 = cell(Vehicle_num, 1);
+            Sigma_pos_shared_v3 = cell(Vehicle_num, 1);
+        end
+
         for n = 1:Vehicle_num
             % DMLKF 边缘化
             if run_dmlkf
@@ -206,6 +225,11 @@ for k = 1:N_steps
             if run_dmlkf_v2
                 [p_est_shared_v2{n}, Sigma_pos_shared_v2{n}] = ...
                     filters_v2{n}.get_marginalized_position_info();
+            end
+            % DMLKF_V3 边缘化
+            if run_dmlkf_v3
+                [p_est_shared_v3{n}, Sigma_pos_shared_v3{n}] = ...
+                    filters_v3{n}.get_marginalized_position_info();
             end
         end
         
@@ -461,6 +485,43 @@ for k = 1:N_steps
                     neigh_Sigma_pos, relative_ranges, sigma_s, sigma_z);
             end
         end
+
+        % =================================================================
+        %   分支4: DMLKF_V3 (纯CI融合 + 无联合状态/无迭代，测距噪声膨胀单步GN)
+	    % =================================================================
+	        if run_dmlkf_v3
+	            for n = 1:Vehicle_num
+	                v_name = sprintf('V%d', n); veh = trajectories.(v_name);
+	                anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2:end)';
+	                anchor_positions_veh = anchors(1:Anchor_num, :);
+	                active_neighbors = neighbors_map{n};
+	                M_neighbors = length(active_neighbors);
+	                relative_ranges = zeros(M_neighbors, 1);
+	                neigh_positions = zeros(M_neighbors, 3);
+	                neigh_Sigma_pos = cell(M_neighbors, 1);
+	                for idx = 1:M_neighbors
+	                    nid = active_neighbors(idx);
+	                    neigh_positions(idx, :) = p_est_shared_v3{nid}';
+	                    neigh_Sigma_pos{idx} = Sigma_pos_shared_v3{nid};
+	                    rel_val = veh.UWB_Relative(k_uwb, 1 + nid);
+	                    if isnan(rel_val) || isinf(rel_val)
+	                        rel_val = norm(p_est_shared_v3{n} - p_est_shared_v3{nid});
+	                    end
+	                    relative_ranges(idx) = rel_val;
+	                end
+	                for a_idx = 1:length(anchor_ranges_raw)
+	                    if isnan(anchor_ranges_raw(a_idx)) || isinf(anchor_ranges_raw(a_idx))
+	                        anchor_ranges_raw(a_idx) = norm(p_est_shared_v3{n} - anchor_positions_veh(a_idx, :)');
+	                    end
+	                end
+	                sigma_s = UWB_noise_params.sigma_anc;
+	                sigma_z = UWB_noise_params.sigma_rel;
+	                filters_v3{n} = filters_v3{n}.apply_uwb_update([], ...
+	                    anchor_ranges_raw, anchor_positions_veh, ...
+	                    active_neighbors, neigh_positions, ...
+	                    neigh_Sigma_pos, relative_ranges, sigma_s, sigma_z);
+	            end
+	        end
     end
     % D. 记录最终定位状态
     for n = 1:Vehicle_num
@@ -473,6 +534,9 @@ for k = 1:N_steps
         if run_dmlkf_v2
             pos_est_dmlkf_v2{n}(k, :) = filters_v2{n}.state.p';
         end
+        if run_dmlkf_v3
+	        pos_est_dmlkf_v3{n}(k, :) = filters_v3{n}.state.p';
+	    end
     end
 end
 fprintf('滤波解算主循环执行完毕。\n');
@@ -496,7 +560,9 @@ end
 if run_dmlkf_v2
     [errors_dmlkf_v2, rmse_dmlkf_v2] = calculate_position_errors(pos_est_dmlkf_v2, pos_true);
 end
-
+if run_dmlkf_v3
+	[errors_dmlkf_v3, rmse_dmlkf_v3] = calculate_position_errors(pos_est_dmlkf_v3, pos_true);
+end
 % 组装分布式定位对照报表并显示
 RowNames = cell(Vehicle_num + 1, 1);
 for n = 1:Vehicle_num
@@ -538,6 +604,16 @@ if run_dmlkf_v2
     var_names{end+1} = 'V2_Euc_RMSE';
 end
 
+if run_dmlkf_v3
+	    V3_Euc_RMSE = zeros(Vehicle_num + 1, 1);
+	    for n = 1:Vehicle_num
+	        V3_Euc_RMSE(n) = rmse_dmlkf_v3(n).euc_rmse;
+	    end
+	    V3_Euc_RMSE(Vehicle_num + 1) = mean(V3_Euc_RMSE(1:Vehicle_num));
+	    vars{end+1} = V3_Euc_RMSE;
+	    var_names{end+1} = 'V3_Euc_RMSE';
+end
+
 if ~isempty(vars)
     rmse_report_table = table(vars{:}, 'RowNames', RowNames, 'VariableNames', var_names);
     fprintf('\n======================= 分布式协同定位性能评估表 (%d 基站) =======================\n', Anchor_num);
@@ -554,6 +630,10 @@ if ~isempty(vars)
         fprintf(' DMLKF_V2 (纯CI融合 + 含联合ADMM优化)   全局平均欧氏定位误差: %.4f m\n', V2_Euc_RMSE(Vehicle_num + 1));
     end
     
+    if run_dmlkf_v3
+	    fprintf(' DMLKF_V3 (纯CI融合 + 无联合邻车估计/GN)   全局平均欧氏定位误差: %.4f m\n', V3_Euc_RMSE(Vehicle_num + 1));
+    end
+
     % 根据开关状态自适应计算增益对比
     if run_dmlkf && run_dmlkf_v1
         improvement_v1 = (V1_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / V1_Euc_RMSE(Vehicle_num + 1) * 100;
@@ -561,8 +641,14 @@ if ~isempty(vars)
     end
     if run_dmlkf && run_dmlkf_v2
         improvement_v2 = (V2_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / V2_Euc_RMSE(Vehicle_num + 1) * 100;
-        fprintf(' [增益对比2] 相比V2，SCI分裂融合使整体定位精度提升了: %.2f%%\n', improvement_v2);
+        fprintf(' [增益对比2] 相比V2，SCI使整体定位精度提升了: %.2f%%\n', improvement_v2);
     end
+    
+    if run_dmlkf && run_dmlkf_v3
+        improvement_v3 = (V3_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / V3_Euc_RMSE(Vehicle_num + 1) * 100;
+        fprintf(' [增益对比2] 相比V3，SCI+联合优化使整体定位精度提升了: %.2f%%\n', improvement_v3);
+    end
+
     fprintf('=============================================================================================================\n');
 else
     fprintf('警告: 未选择运行任何算法，无评估结果。\n');
@@ -594,6 +680,11 @@ if ~isempty(vars)
             legend_entries{end+1} = 'DMLKF\_V2 (CI+ADMM)';
         end
         
+        if run_dmlkf_v3
+            plot(time_arr, errors_dmlkf_v3(n).euc_err, 'g:', 'LineWidth', 1.2);
+            legend_entries{end+1} = 'DMLKF\_V3 (CI+No Joint)';
+        end
+
         title(sprintf('Vehicle %d Euclidean Error', n));
         xlabel('Time (s)'); ylabel('Error (m)');
         legend(legend_entries, 'Location', 'northeast');
