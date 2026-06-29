@@ -14,7 +14,7 @@ classdef DEKF
     
     methods
         %% 构造函数 (9维经典结构)
-        function obj = DEKF(id, init_state, init_cov, Q_matrix, tau, omega_self)
+        function obj = DEKF(id, init_state, init_cov, tau, omega_self)
             obj.id = id;
             obj.state.p = init_state.p;
             obj.state.v = init_state.v;
@@ -29,7 +29,12 @@ classdef DEKF
             obj.P = obj.P + 1e-10 * eye(9); % 保证正定防 NaN
             
             % 直接接收并使用外部传入的 9D 过程噪声矩阵 Q_9d
-            obj.Q = Q_matrix;
+            Q_sigmas_9d = [ ...
+                0.001 * ones(1,3), ... % 位置过程噪声标准差 
+                0.01 * ones(1,3), ...  % 速度过程噪声标准差 
+                0.001 * ones(1,3) ...  % 姿态过程噪声标准差 
+                ];
+            obj.Q = diag(Q_sigmas_9d.^2);
             
             obj.tau = tau;
             obj.omega_self = omega_self;
