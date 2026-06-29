@@ -15,12 +15,12 @@
 	N_steps = round(t_end / dt_imu) + 1; 
 	% ==================================================
 	% 在此处自由修改车辆数(4-12)与基站数(4-20)
-	Vehicle_num = 12;            
+	Vehicle_num = 4;            
 	Anchor_num = 6;             
 	% ==================================================
 	% 保存路径
 	save_dir = 'E:\SE3_MLKF\Data\diff_V_6Anc'; 
-	trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D.mat', Vehicle_num, Anchor_num);
+	trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D_1.mat', Vehicle_num, Anchor_num);
 	% 噪声参数
 	IMU_noise_params.sigma_na = 0.03;      
 	IMU_noise_params.sigma_nw = 0.003;     

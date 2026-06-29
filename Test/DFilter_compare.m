@@ -20,6 +20,16 @@
 	end
 	load(data_file); % 载入 trajectories, anchors, IMU_noise_params, UWB_noise_params, Vehicle_num, Anchor_num
 	dt_imu = 0.01; % 100Hz 采样步长
+
+    %% 一些超参数
+    max_admm_iter = 2;
+
+	SCI_rho = 0.8;           % DMLKF,DMLKF_V1
+    CI_rho = 2;            % DMLKF_V2
+
+    omega_self_SCI = 0.8;    % DMLKF
+    omega_self_SCI_V1 = 0.5; % DMLKF_V1
+    omega_self_CI  = 0.9;    % DMLKF_V2
 	%% 2. 状态真值重建与偏置已知设定
 	for n = 1:Vehicle_num
 	    v_name = sprintf('V%d', n);
@@ -56,8 +66,7 @@
 	pos_est_dmlkf_v1 = cell(Vehicle_num, 1); % DMLKF_V1 定位结果
 	pos_est_dmlkf_v2 = cell(Vehicle_num, 1); % DMLKF_V2 定位结果
 	% 自身权重 (SCI和CI均使用该权重分配自身与邻居的比例)
-	omega_self_SCI = 0.8;
-    omega_self_CI  = 0.9;
+	
 	for n = 1:Vehicle_num
 	    v_name = sprintf('V%d', n);
 	    veh = trajectories.(v_name);
@@ -86,7 +95,7 @@
 	    Sigma_w = diag(IMU_noise_params.sigma_nw.^2 * ones(1,3));
 	    % 分别创建对象
 	    filters{n} = DMLKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_SCI);
-	    filters_v1{n} = DMLKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_SCI);
+	    filters_v1{n} = DMLKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_SCI_V1);
 	    filters_v2{n} = DMLKF_V2(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_CI);
 	    % 预分配定位结果空间
 	    pos_est_dmlkf{n} = zeros(N_steps, 3);
@@ -164,8 +173,7 @@
 	        % =================================================================
 	        %   分支1: 原始 DMLKF (含联合邻车ADMM优化 + SCI融合)
 	        % =================================================================
-	        max_admm_iter = 2;
-	        rho = 1.4;
+	        
 	        for n = 1:Vehicle_num
 	            filters{n} = filters{n}.reset_dual_variables();
 	        end
@@ -210,7 +218,7 @@
 	                s_admm_new{n} = filters{n}.solve_primal_public(s_admm_all{n}, ...
 	                    anchor_ranges_raw, anchor_positions_veh, ...
 	                    neigh_positions, relative_ranges, sigma_s, sigma_z, ...
-	                    rho, active_neighbors, ...
+	                    SCI_rho, active_neighbors, ...
 	                    dp_neigh_neigh_all{n}, dp_neigh_self_all{n});
 	            end
 	            s_admm_all = s_admm_new;
@@ -231,7 +239,7 @@
 	            for n = 1:Vehicle_num
 	                active_neighbors = neighbors_map{n};
 	                filters{n} = filters{n}.update_dual(s_admm_all{n}, ...
-	                    active_neighbors, dp_neigh_neigh_all{n}, dp_neigh_self_all{n}, rho);
+	                    active_neighbors, dp_neigh_neigh_all{n}, dp_neigh_self_all{n}, SCI_rho);
 	            end
 	        end
 	        for n = 1:Vehicle_num
@@ -308,6 +316,7 @@
 	        % =================================================================
 	        %   分支3: DMLKF_V2 (含联合邻车ADMM优化 + 纯CI融合)
 	        % =================================================================
+            
 	        for n = 1:Vehicle_num
 	            filters_v2{n} = filters_v2{n}.reset_dual_variables();
 	        end
@@ -352,7 +361,7 @@
 	                s_admm_new_v2{n} = filters_v2{n}.solve_primal_public(s_admm_all_v2{n}, ...
 	                    anchor_ranges_raw, anchor_positions_veh, ...
 	                    neigh_positions, relative_ranges, sigma_s, sigma_z, ...
-	                    rho, active_neighbors, ...
+	                    CI_rho, active_neighbors, ...
 	                    dp_neigh_neigh_all_v2{n}, dp_neigh_self_all_v2{n});
 	            end
 	            s_admm_all_v2 = s_admm_new_v2;
@@ -373,7 +382,7 @@
 	            for n = 1:Vehicle_num
 	                active_neighbors = neighbors_map{n};
 	                filters_v2{n} = filters_v2{n}.update_dual(s_admm_all_v2{n}, ...
-	                    active_neighbors, dp_neigh_neigh_all_v2{n}, dp_neigh_self_all_v2{n}, rho);
+	                    active_neighbors, dp_neigh_neigh_all_v2{n}, dp_neigh_self_all_v2{n}, CI_rho);
 	            end
 	        end
 	        for n = 1:Vehicle_num

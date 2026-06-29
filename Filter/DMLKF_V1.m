@@ -126,7 +126,7 @@ classdef DMLKF_V1
                 grad = H' * R_IMU_inv * r;
                 
                 step = obj.safe_solve(Hessian, grad, obj.mu);
-                max_step = 0.1;
+                max_step = 1;
                 n_step = norm(step);
                 if n_step > max_step
                     step = step * (max_step / n_step);

@@ -156,7 +156,7 @@ classdef DMLKF
                 % 求解更新增量并引入正则阻尼阻绝 NaN (Eq. 38)
                 step = obj.safe_solve(Hessian, grad, obj.mu);
                 % 增加步长截断防爆机制
-                max_step = 0.1; % 限制单次迭代最大变化量
+                max_step = 0.8; % 限制单次迭代最大变化量
                 n_step = norm(step);
                 if n_step > max_step
                     step = step * (max_step / n_step);
@@ -470,7 +470,7 @@ classdef DMLKF
             D_eig(D_eig < 1e-6) = 1e-6; % 将负特征值或极小值截断为一个极小正数
             Lambda_t_int = V_eig * diag(D_eig) * V_eig';
             % ==============================
-            
+
             % 边缘化信息向量 (Eq. 76, 77)
             s_self_mle = s_star(1:3);
             lambda_t_anc = Lambda_t_anc * s_self_mle;
