@@ -1,5 +1,7 @@
 classdef DEKF
     % DEKF: 9维经典误差状态EKF类 (纯CI批量融合版)
+    % CI: 先验协方差只放大位置状态(速度状态为了数值而放大了1.05倍)
+    % 更新步只对整体R当中相对测距部分进行等效噪声放大
     % 状态结构：.p (3x1), .v (3x1), .R (3x3)，IMU作为传播输入，无高频IMU独立更新步
     
     properties
@@ -9,12 +11,13 @@ classdef DEKF
         Q               % 9x9 离散单步系统过程噪声协方差矩阵 (严格对齐Q_single)
         g_vec           % 3D 重力加速度常数 (通常为 [0; 0; -9.81])
         tau             % IMU采样预测周期 dt (秒)
-        omega_self      % 本车CI权重 (外部输入)
+        omega_self      % 本车CI权重
+        omega_neigh     % 邻居CI权重
     end
     
     methods
         %% 构造函数 (9维经典结构)
-        function obj = DEKF(id, init_state, init_cov, tau, omega_self)
+        function obj = DEKF(id, init_state, init_cov, tau)
             obj.id = id;
             obj.state.p = init_state.p;
             obj.state.v = init_state.v;
@@ -37,7 +40,8 @@ classdef DEKF
             obj.Q = diag(Q_sigmas_9d.^2);
             
             obj.tau = tau;
-            obj.omega_self = omega_self;
+            obj.omega_self = 0.8;
+            obj.omega_neigh = 1 - obj.omega_self;
             obj.g_vec = [0; 0; -9.81];
         end
         
@@ -91,8 +95,10 @@ classdef DEKF
             
             if (K + M) == 0, return; end
             
-            % --- 1. 本车先验协方差 CI 比例膨胀 ---
-            P_scaled = (1 / obj.omega_self) * obj.P;
+            % --- 1. 本车先验协方差 子空间 CI 比例膨胀 (仅缩放位置通道，100%保护速度与姿态) ---
+            D_factor = 1 / sqrt(obj.omega_self);
+            D = diag([D_factor * ones(1, 3), 1.05*ones(1, 3), ones(1, 3)]); % 构造 9x9 对角缩放矩阵
+            P_scaled = D * obj.P * D; % 两侧对称相乘，严格保持对称正定性
             P_scaled = 0.5 * (P_scaled + P_scaled');
             
             % --- 2. 构建批量测量向量、等效噪声矩阵与观测雅可比 ---
@@ -113,8 +119,7 @@ classdef DEKF
                 R_list(k) = sigma_s^2;
             end
             
-            % B. 协同邻车观测处理 (CI噪声膨胀)
-            omega_neigh = (1 - obj.omega_self) / M;
+
             for idx = 1:M
                 p_j = neighbor_positions(idx, :)';
                 dist = norm(p_i - p_j);
@@ -124,7 +129,7 @@ classdef DEKF
                 H(K + idx, 1:3) = u_j';
                 
                 % 测量噪声膨胀：基础测距方差 + 膨胀后的邻车不确定性投影
-                Sigma_pos_j_CI = (1 / omega_neigh) * neighbor_Sigma_pos{idx};
+                Sigma_pos_j_CI = (1 / obj.omega_neigh) * neighbor_Sigma_pos{idx};
                 R_list(K + idx) = sigma_z^2 + u_j' * Sigma_pos_j_CI * u_j;
             end
             

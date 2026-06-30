@@ -1,5 +1,7 @@
 classdef DIEKF
     % DIEKF: 9维经典误差状态分布式迭代EKF类 (纯CI批量迭代融合版)
+    % CI: 先验协方差只放大位置状态
+    % 更新步只对整体R当中相对测距部分进行等效噪声放大
     % 状态结构：.p (3x1), .v (3x1), .R (3x3)，IMU作为传播输入，UWB测量进行流形迭代更新
     
     properties
@@ -9,13 +11,14 @@ classdef DIEKF
         Q               % 9x9 离散单步系统过程噪声协方差矩阵 (严格对齐预设)
         g_vec           % 3D 重力加速度常数 (通常为 [0; 0; -9.81])
         tau             % IMU采样预测周期 dt (秒)
-        omega_self      % 本车CI权重 (外部输入)
+        omega_self      % 本车CI权重
+        omega_neigh     % 邻居CI权重
         mu              % 高斯-牛顿正则化参数 (防御NaN)
     end
     
     methods
         %% 构造函数 (9维经典结构)
-        function obj = DIEKF(id, init_state, init_cov, tau, omega_self)
+        function obj = DIEKF(id, init_state, init_cov, tau)
             obj.id = id;
             obj.state.p = init_state.p;
             obj.state.v = init_state.v;
@@ -30,16 +33,17 @@ classdef DIEKF
             obj.P = obj.P + 1e-10 * eye(9); % 保证正定防 NaN
             
             Q_sigmas_9d = [ ...
-                0.001 * ones(1,3), ... % 位置过程噪声标准差 
-                0.01 * ones(1,3), ...  % 速度过程噪声标准差 
-                0.001 * ones(1,3) ...  % 姿态过程噪声标准差 
+                0.0005 * ones(1,3), ... % 位置过程噪声标准差 
+                0.005 * ones(1,3), ...  % 速度过程噪声标准差 
+                0.0005 * ones(1,3) ...  % 姿态过程噪声标准差 
                 ];
             obj.Q = diag(Q_sigmas_9d.^2);
             
             obj.tau = tau;
-            obj.omega_self = omega_self;
+            obj.omega_self = 0.8;
+            obj.omega_neigh = 1- obj.omega_self;
             obj.g_vec = [0; 0; -9.81];
-            obj.mu = 1e-5;
+            obj.mu = 1e-4;
         end
         
         %% 【接口兼容哑方法】
@@ -93,16 +97,17 @@ classdef DIEKF
             if (K + M) == 0, return; end
             
             % --- 1. 本车先验协方差 CI 比例膨胀 ---
-            P_scaled = (1 / obj.omega_self) * obj.P;
+            D_factor = 1 / sqrt(obj.omega_self);
+            D = diag([D_factor * ones(1, 3), ones(1, 3), ones(1, 3)]); % 构造 9x9 对角缩放矩阵
+            P_scaled = D * obj.P * D; % 两侧对称相乘，严格保持对称正定性
             P_scaled = 0.5 * (P_scaled + P_scaled');
             
             % --- 2. 基于标称先验初始化迭代变量 ---
             dx = zeros(9, 1); % 先验流形切空间中的迭代扰动变量
             y_meas = [anchor_ranges; relative_ranges];
-            omega_neigh = (1 - obj.omega_self) / M;
-            
-            % 迭代上限通常设为 5 次
-            max_iekf_iter = 5;
+
+            % 迭代上限通常设为 10 次
+            max_iekf_iter = 10;
             for iter = 1:max_iekf_iter
                 % A. 计算当前迭代工作点标称状态 (流形指数更新)
                 p_curr = obj.state.p + dx(1:3);
@@ -133,7 +138,7 @@ classdef DIEKF
                     H(K + idx, 1:3) = u_j';
                     
                     % 动态噪声膨胀：基础测距方差 + 膨胀后的邻车不确定性投影
-                    Sigma_pos_j_CI = (1 / omega_neigh) * neighbor_Sigma_pos{idx};
+                    Sigma_pos_j_CI = (1 / obj.omega_neigh) * neighbor_Sigma_pos{idx};
                     R_list(K + idx) = sigma_z^2 + u_j' * Sigma_pos_j_CI * u_j;
                 end
                 

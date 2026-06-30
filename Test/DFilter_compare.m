@@ -11,7 +11,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh5_Anc6_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh4_Anc6_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat'; 
     if ~exist(data_file, 'file')
@@ -31,14 +31,12 @@ dt_imu = 0.01; % 100Hz 采样步长
     omega_self_SCI_V1 = 0.5;    % DMLKF_V1
     omega_self_CI_V2  = 0.9;    % DMLKF_V2
     omega_self_CI_V3 = 0.9;     % DMLKF_V3 (CI+无联合)  
-    
-    omega_self_DEKF  = 0.5;     % DEKF 本车权重    
-    omega_self_DIEKF = 0.6;     % DIEKF 本车权重    
+ 
 %% 算法运行开关 (Algorithm selection flags)
     run_dmlkf    = 0;  % 原始 DMLKF (SCI+ADMM)
     run_dmlkf_v1 = 0;  % 基准 DMLKF_V1 (SCI+No Joint)
     run_dmlkf_v2 = 0;  % 基准 DMLKF_V2 (CI+ADMM)
-    run_dmlkf_v3 = 0;  % 新增基准 DMLKF_V3 (CI+No Joint) 
+    run_dmlkf_v3 = 1;  % 新增基准 DMLKF_V3 (CI+No Joint) 
     run_dekf     = 1;  % 新增基准 DEKF (CI+9D)   
     run_diekf    = 1;  % 新增基准 DIEKF (CI+9D)  
 
@@ -133,11 +131,11 @@ for n = 1:Vehicle_num
         pos_est_dmlkf_v3{n} = zeros(N_steps, 3);
     end
     if run_dekf
-        filters_dekf{n} = DEKF(n, init_state, init_cov, dt_imu, omega_self_DEKF);
+        filters_dekf{n} = DEKF(n, init_state, init_cov, dt_imu);
         pos_est_dekf{n} = zeros(N_steps, 3);
     end
     if run_diekf
-        filters_diekf{n} = DIEKF(n, init_state, init_cov, dt_imu, omega_self_DIEKF);
+        filters_diekf{n} = DIEKF(n, init_state, init_cov, dt_imu);
         pos_est_diekf{n} = zeros(N_steps, 3);
     end
 end
