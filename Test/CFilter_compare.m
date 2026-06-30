@@ -88,8 +88,8 @@ init_P_9d = kron(eye(Vehicle_num), P_n_init_9d);
 
 % C. 实例化两个滤波器类
 filter_cmlkf = CMLKF(init_states_15d, init_P_15d, Q_sigmas_15d);
-filter_ekf   = EKF(init_states_9d, init_P_9d); 
-filter_iekf  = IEKF(init_states_9d, init_P_9d);
+filter_ekf   = CEKF(init_states_9d, init_P_9d); 
+filter_iekf  = CIEKF(init_states_9d, init_P_9d);
 
 %% 4. 执行多滤波器并行仿真循环
 pos_est_cmlkf = cell(Vehicle_num, 1);

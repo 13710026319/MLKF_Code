@@ -94,8 +94,8 @@
 	        Sigma_w = diag(IMU_noise_params.sigma_nw.^2 * ones(1,3));
 	        % 实例化各滤波器类
 	        filter_cmlkf = CMLKF(init_states_15d, init_P_15d, Q_sigmas_15d);
-	        filter_ekf   = EKF(init_states_9d, init_P_9d); 
-	        filter_iekf  = IEKF(init_states_9d, init_P_9d); 
+	        filter_ekf   = CEKF(init_states_9d, init_P_9d); 
+	        filter_iekf  = CIEKF(init_states_9d, init_P_9d); 
 	        filters_dmlkf = cell(Vehicle_num, 1);
 	        for n = 1:Vehicle_num
 	            th0 = trajectories.(sprintf('V%d', n)).Theta_true(1);

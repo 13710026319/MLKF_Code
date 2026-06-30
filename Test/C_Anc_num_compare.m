@@ -116,8 +116,8 @@ if ~jump_to_plot
         
         % 实例化滤波器类
         filter_cmlkf = CMLKF(init_states_15d, init_P_15d, Q_sigmas_15d);
-        filter_ekf   = EKF(init_states_9d, init_P_9d); 
-        filter_iekf  = IEKF(init_states_9d, init_P_9d); 
+        filter_ekf   = CEKF(init_states_9d, init_P_9d); 
+        filter_iekf  = CIEKF(init_states_9d, init_P_9d); 
         
         % D. 运行记录初始化
         pos_est_cmlkf = cell(Vehicle_num, 1);

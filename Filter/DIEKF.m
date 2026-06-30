@@ -1,6 +1,6 @@
 classdef DIEKF
     % DIEKF: 9维经典误差状态分布式迭代EKF类 (纯CI批量迭代融合版)
-    % CI: 先验协方差只放大位置状态
+    % CI: 先验协方差只放大位置状态(速度状态为了数值而放大了1.03倍)
     % 更新步只对整体R当中相对测距部分进行等效噪声放大
     % 状态结构：.p (3x1), .v (3x1), .R (3x3)，IMU作为传播输入，UWB测量进行流形迭代更新
     
@@ -98,7 +98,7 @@ classdef DIEKF
             
             % --- 1. 本车先验协方差 CI 比例膨胀 ---
             D_factor = 1 / sqrt(obj.omega_self);
-            D = diag([D_factor * ones(1, 3), ones(1, 3), ones(1, 3)]); % 构造 9x9 对角缩放矩阵
+            D = diag([D_factor * ones(1, 3), 1.03 * ones(1, 3), ones(1, 3)]); % 构造 9x9 对角缩放矩阵
             P_scaled = D * obj.P * D; % 两侧对称相乘，严格保持对称正定性
             P_scaled = 0.5 * (P_scaled + P_scaled');
             
