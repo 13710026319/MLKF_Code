@@ -17,7 +17,7 @@ classdef DMLKF_V3
     
     methods
         %% 构造函数 (签名与各版本严格一致)
-        function obj = DMLKF_V3(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, omega_self)
+        function obj = DMLKF_V3(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau)
             obj.id = id;
             obj.state = init_state;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
@@ -31,7 +31,7 @@ classdef DMLKF_V3
             obj.tau = tau;
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5;
-            obj.omega_self = omega_self;
+            obj.omega_self = 0.95;
         end
         
         %% 【接口兼容哑方法】
@@ -178,7 +178,7 @@ classdef DMLKF_V3
             s_pos = zeros(3, 1);
             
             % --- 1. 基于 CI 比例折损邻车先验精度，得到膨胀邻车协方差 ---
-            omega_neigh = (1 - obj.omega_self) / M;
+            omega_neigh = (1 - 0.9) / M;
             Sigma_neigh_expanded = cell(M, 1);
             for i = 1:M
                 % CI规则下，等效测量误差被膨胀为 1/omega_neigh 倍 [71]

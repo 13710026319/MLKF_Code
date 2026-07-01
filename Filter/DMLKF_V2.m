@@ -18,7 +18,7 @@
 	    end
 	    methods
 	        %% 构造函数
-	        function obj = DMLKF_V2(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, omega_self)
+	        function obj = DMLKF_V2(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau)
 	            obj.id = id;
 	            obj.state = init_state;
 	            obj.state.R = obj.robust_orthonormalize(init_state.R);
@@ -31,7 +31,7 @@
 	            obj.tau = tau;
 	            obj.g_vec = [0; 0; -9.81];
 	            obj.mu = 1e-5; % 防止GN迭代中Hessian退化
-	            obj.omega_self = omega_self;
+	            obj.omega_self = 0.93;
 	            obj.lambda_local = containers.Map('KeyType', 'double', 'ValueType', 'any');
 	            obj.lambda_remote = containers.Map('KeyType', 'double', 'ValueType', 'any');
 	        end

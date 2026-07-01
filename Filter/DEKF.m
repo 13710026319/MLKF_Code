@@ -97,7 +97,7 @@ classdef DEKF
             
             % --- 1. 本车先验协方差 子空间 CI 比例膨胀 (仅缩放位置通道，100%保护速度与姿态) ---
             D_factor = 1 / sqrt(obj.omega_self);
-            D = diag([D_factor * ones(1, 3), 1.1*ones(1, 3), ones(1, 3)]); % 构造 9x9 对角缩放矩阵
+            D = diag([D_factor * ones(1, 3), (1/0.8)*ones(1, 3), ones(1, 3)]); % 构造 9x9 对角缩放矩阵
             P_scaled = D * obj.P * D; % 两侧对称相乘，严格保持对称正定性
             P_scaled = 0.5 * (P_scaled + P_scaled');
             

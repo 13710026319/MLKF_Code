@@ -18,7 +18,7 @@ classdef DMLKF_V1
     
     methods
         %% 构造函数 (签名与原DMLKF严格一致)
-        function obj = DMLKF_V1(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, omega_self)
+        function obj = DMLKF_V1(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau)
             obj.id = id;
             obj.state = init_state;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
@@ -34,7 +34,7 @@ classdef DMLKF_V1
             obj.tau = tau;
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5; % 防止GN迭代中Hessian退化
-            obj.omega_self = omega_self;
+            obj.omega_self = 0.7;
         end
         
         %% 【接口兼容】重置对偶变量哑接口 (V1无对偶变量，直接返回)
@@ -257,9 +257,7 @@ classdef DMLKF_V1
                     u_i = vec / dist;
                     r_int = relative_ranges(i) - dist;
                     
-                    % 噪声膨胀核心公式: 基础传感器噪声 + 邻车不确定性投影
                     sigma2_z_eff = sigma_z^2 + u_i' * Sigma_neigh_SCI{i} * u_i;
-                    
                     g_L = g_L - (1 / sigma2_z_eff) * u_i * r_int;
                     H_L = H_L + (1 / sigma2_z_eff) * (u_i * u_i');
                 end
@@ -296,16 +294,20 @@ classdef DMLKF_V1
             for i = 1:M
                 p_neigh_est = neighbor_positions(i, :)';
                 u_i = (p_converged - p_neigh_est) / ...
-                      max(norm(p_converged - p_neigh_est), 1e-6);
-                  
-                sigma2_z_eff = sigma_z^2 + u_i' * Sigma_neigh_SCI{i} * u_i;
+                      max(norm(p_converged - p_neigh_est), 1e-6);                  
+                sigma2_z_eff = sigma_z^2 + u_i' * Sigma_neigh_SCI{i} * u_i;                
                 Lambda_t_int = Lambda_t_int + (1 / sigma2_z_eff) * (u_i * u_i');
             end
             
             % C. 构建等效信息向量
+            % lambda_t_anc = Lambda_t_anc * s_pos;
+            % lambda_t_int = Lambda_t_int * s_pos;
+                    
+            int_scale = 1.4;  % 可调参数,编号1
             lambda_t_anc = Lambda_t_anc * s_pos;
-            lambda_t_int = Lambda_t_int * s_pos;
-            
+            lambda_t_int = int_scale * Lambda_t_int * s_pos;
+            Lambda_t_int = int_scale * Lambda_t_int;  % Λ也同步缩放保持一致
+
             % --- 4. 映射到 15 维全局空间并更新信息状态 ---
             Lambda_anc_full = zeros(15, 15); Lambda_anc_full(1:3, 1:3) = Lambda_t_anc;
             lambda_anc_full = zeros(15, 1);  lambda_anc_full(1:3) = lambda_t_anc;
