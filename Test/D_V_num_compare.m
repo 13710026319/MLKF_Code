@@ -34,13 +34,10 @@ else
 end
 
 %% 2. 核心评测循环
-omega_self_SCI = 0.8;
-omega_self_SCI_V1 = 0.5;
-omega_self_CI_V2 = 0.9;
-omega_self_CI_V3 = 0.9;
+
 max_admm_iter = 2;
 SCI_rho = 0.8;
-CI_rho = 2;
+CI_rho = 1.5;
 
 if ~jump_to_plot
     for idx_veh = 1 : N_veh_tests
@@ -109,12 +106,12 @@ if ~jump_to_plot
             init_state.omega = veh.omega_true(1, :)';
 
             % 初始化各算法
-            filters_dekf{n} = DEKF(n, init_state, init_cov, dt_imu);
-            filters_diekf{n} = DIEKF(n, init_state, init_cov, dt_imu);
-            filters_v3{n} = DMLKF_V3(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_CI_V3);
-            filters_v2{n} = DMLKF_V2(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_CI_V2);
-            filters_v1{n} = DMLKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_SCI_V1);
-            filters_dmlkf{n} = DMLKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, omega_self_SCI);
+            filters_dekf{n} = DEKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+            filters_diekf{n} = DIEKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+            filters_v3{n} = DMLKF_V3(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+            filters_v2{n} = DMLKF_V2(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+            filters_v1{n} = DMLKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+            filters_dmlkf{n} = DMLKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
 
             % 预分配结果
             pos_est_dekf{n} = zeros(N_steps, 3);
@@ -158,9 +155,8 @@ if ~jump_to_plot
 
             % 高频 IMU 更新
             for n = 1 : Vehicle_num
-                filters_dekf{n} = filters_dekf{n}.predict(imu_acc(n, :)', imu_gyro(n, :)');
-                filters_diekf{n} = filters_diekf{n}.predict(imu_acc(n, :)', imu_gyro(n, :)');
-
+                filters_dekf{n} = filters_dekf{n}.predict(); filters_dekf{n} = filters_dekf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+                filters_diekf{n} = filters_diekf{n}.predict(); filters_diekf{n} = filters_diekf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
                 filters_v3{n} = filters_v3{n}.predict(); filters_v3{n} = filters_v3{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
                 filters_v2{n} = filters_v2{n}.predict(); filters_v2{n} = filters_v2{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
                 filters_v1{n} = filters_v1{n}.predict(); filters_v1{n} = filters_v1{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));

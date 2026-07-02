@@ -11,7 +11,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh9_Anc6_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh12_Anc6_3D_1.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat';
     if ~exist(data_file, 'file')
@@ -127,12 +127,12 @@ for n = 1 : Vehicle_num
         pos_est_dmlkf_v3{n} = zeros(N_steps, 3);
     end
     if run_dekf
-        % 最后一个参数虽会被内部强制置为 0.8，但传参结构保持对齐
+        % DEKF实例化
         filters_dekf{n} = DEKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
         pos_est_dekf{n} = zeros(N_steps, 3);
     end
     if run_diekf
-        % 实例化流形迭代 EKF，最后一个参数虽会被内部强制置为 0.8，但传参结构保持对齐
+        % 实例化流形迭代 EKF
         filters_diekf{n} = DIEKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
         pos_est_diekf{n} = zeros(N_steps, 3);
     end

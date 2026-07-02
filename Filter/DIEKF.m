@@ -196,7 +196,7 @@ classdef DIEKF
             delta_theta_0 = zeros(15, 1);
             
             % 迭代递推解算
-            max_iter = 5;
+            max_iter = 10;
             for iter = 1:max_iter
                 p_iter = check_p + delta_theta_0(1:3);
                 
@@ -253,10 +253,12 @@ classdef DIEKF
                 S_reg = S + obj.mu * eye(L);
                 
                 K_gain = P_scaled * H_prior' / S_reg;
-                delta_theta_0_new = K_gain * r_MAP;
+                % 引入阻尼因子，平抑由于 CI 膨胀带来的迭代震荡
+                alpha = 0.8;
+                delta_theta_0_new = (1.0 - alpha) * delta_theta_0 + alpha * (K_gain * r_MAP);
                 
                 % 15维等比例步长阶段，维持复合空间物理一致性
-                max_pos_step = 0.5;
+                max_pos_step = 0.15;
                 norm_pos = norm(delta_theta_0_new(1:3));
                 if norm_pos > max_pos_step
                     delta_theta_0_new = delta_theta_0_new * (max_pos_step / norm_pos);
