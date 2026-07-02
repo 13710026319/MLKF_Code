@@ -12,7 +12,7 @@ addpath(genpath('../Data'));
 
 Veh_list = 4 : 12;
 uwb_downsample_factor = 10;
-imu_update_factors = [1,10]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz, 25 = 4Hz 等
+imu_update_factors = [1, 2, 5, 10, 25]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz, 25 = 4Hz 等
 
 N_veh_tests = length(Veh_list);
 
