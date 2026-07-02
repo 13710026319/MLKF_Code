@@ -11,7 +11,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh12_Anc6_3D_1.mat';
+data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh8_Anc6_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat';
     if ~exist(data_file, 'file')
@@ -30,11 +30,11 @@ CI_rho = 1.5;     % DMLKF_V2, 发现V2的要比V1的数值大
 %% 算法运行开关 (Algorithm selection flags)
 run_dmlkf = 1; % 原始 DMLKF (SCI+ADMM)
 run_dmlkf_v1 = 1; % 基准 DMLKF_V1 (SCI+No Joint)
-run_dmlkf_v2 = 1; % 基准 DMLKF_V2 (CI+ADMM)
-run_dmlkf_v3 = 1; % 新增基准 DMLKF_V3 (CI+No Joint)
+run_dmlkf_v2 = 0; % 基准 DMLKF_V2 (CI+ADMM)
+run_dmlkf_v3 = 0; % 新增基准 DMLKF_V3 (CI+No Joint)
 
-run_dekf = 1; % 经典 DEKF + CI 融合
-run_diekf = 1; % DIEKF_V1 + 全维 CI 融合
+run_dekf = 0; % 经典 DEKF + CI 融合
+run_diekf = 0; % DIEKF_V1 + 全维 CI 融合
 
 %% 2. 状态真值重建与偏置已知设定
 for n = 1 : Vehicle_num

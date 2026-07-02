@@ -11,33 +11,37 @@ addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
 Veh_list = 4 : 12;
+uwb_downsample_factor = 10;
+imu_update_factors = [1,10]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz, 25 = 4Hz 等
+
 N_veh_tests = length(Veh_list);
 
 save_dir = 'E:\SE3_MLKF\Result';
-save_name = 'D_V_num_6Anc_compare.mat';
-save_path = fullfile(save_dir, save_name);
 
-if exist(save_path, 'file')
-    fprintf('检测到历史评测数据 [%s]，正在直接加载并生成图表...\n', save_name);
-    load(save_path);
-    jump_to_plot = true;
-else
-    jump_to_plot = false;
-    % 预分配结果
-    rmse_all_dekf = zeros(N_veh_tests, 1);
-    rmse_all_diekf = zeros(N_veh_tests, 1);
-    rmse_all_v3 = zeros(N_veh_tests, 1);
-    rmse_all_v2 = zeros(N_veh_tests, 1);
-    rmse_all_v1 = zeros(N_veh_tests, 1);
-    rmse_all_dmlkf = zeros(N_veh_tests, 1);
-    fprintf('开始执行 6 算法多车数据集联合性能评测...\n');
-end
 
 %% 2. 核心评测循环
 
 max_admm_iter = 2;
 SCI_rho = 0.8;
 CI_rho = 1.5;
+
+for f_idx = 1:length(imu_update_factors)
+    imu_update_factor = imu_update_factors(f_idx);
+    fprintf('\n========== 开始 IMU factor = %d (约 %.1f Hz) ==========\n', ...
+            imu_update_factor, 100/imu_update_factor);
+    
+    % 为当前frequency生成文件名
+    save_name = sprintf('D_V_num_6Anc_IMU_%dHZ.mat', 100/imu_update_factor);
+    save_path = fullfile(save_dir, save_name);
+    
+    if exist(save_path, 'file')
+        fprintf('检测到历史数据 [%s]，直接加载...\n', save_name);
+        load(save_path);
+        jump_to_plot = true;
+    else
+        jump_to_plot = false;
+        fprintf('未找到结果，开始计算...\n');
+    end
 
 if ~jump_to_plot
     for idx_veh = 1 : N_veh_tests
@@ -51,7 +55,7 @@ if ~jump_to_plot
         end
         load(data_file);
         dt_imu = 0.01;
-        uwb_downsample_factor = 10;
+        
 
         %% 状态真值重建
         for n = 1 : Vehicle_num
@@ -116,10 +120,10 @@ if ~jump_to_plot
             % 预分配结果
             pos_est_dekf{n} = zeros(N_steps, 3);
             pos_est_diekf{n} = zeros(N_steps, 3);
-            pos_est_v3{n}   = zeros(N_steps, 3);
-            pos_est_v2{n}   = zeros(N_steps, 3);
-            pos_est_v1{n}   = zeros(N_steps, 3);
-            pos_est_dmlkf{n}= zeros(N_steps, 3);
+            pos_est_v3{n} = zeros(N_steps, 3);
+            pos_est_v2{n} = zeros(N_steps, 3);
+            pos_est_v1{n} = zeros(N_steps, 3);
+            pos_est_dmlkf{n} = zeros(N_steps, 3);
         end
 
         % 通信拓扑
@@ -153,14 +157,25 @@ if ~jump_to_plot
                 imu_gyro(n, :) = (veh.IMU_gyro_m(k, :)' - bw)';
             end
 
-            % 高频 IMU 更新
+            % IMU 部分
             for n = 1 : Vehicle_num
-                filters_dekf{n} = filters_dekf{n}.predict(); filters_dekf{n} = filters_dekf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
-                filters_diekf{n} = filters_diekf{n}.predict(); filters_diekf{n} = filters_diekf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
-                filters_v3{n} = filters_v3{n}.predict(); filters_v3{n} = filters_v3{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
-                filters_v2{n} = filters_v2{n}.predict(); filters_v2{n} = filters_v2{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
-                filters_v1{n} = filters_v1{n}.predict(); filters_v1{n} = filters_v1{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
-                filters_dmlkf{n} = filters_dmlkf{n}.predict(); filters_dmlkf{n} = filters_dmlkf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+                % IMU 预测
+                filters_dekf{n} = filters_dekf{n}.predict();
+                filters_diekf{n} = filters_diekf{n}.predict();
+                filters_v3{n} = filters_v3{n}.predict();
+                filters_v2{n} = filters_v2{n}.predict();
+                filters_v1{n} = filters_v1{n}.predict();
+                filters_dmlkf{n} = filters_dmlkf{n}.predict();
+
+                % IMU 更新（使用当前时刻真实 IMU 数据）
+                if mod(k - 1, imu_update_factor) == 0
+                    filters_dekf{n} = filters_dekf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+                    filters_diekf{n} = filters_diekf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+                    filters_v3{n} = filters_v3{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+                    filters_v2{n} = filters_v2{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+                    filters_v1{n} = filters_v1{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+                    filters_dmlkf{n} = filters_dmlkf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+                end
             end
 
             % UWB 更新 (10Hz)
@@ -490,7 +505,7 @@ if ~jump_to_plot
 
                 % =================================================================
                 %   分支4: DMLKF_V3 (纯CI融合 + 无联合状态/无迭代，测距噪声膨胀单步GN)
-        	    % =================================================================
+                % =================================================================
 
                 for n = 1 : Vehicle_num
                     v_name = sprintf('V%d', n); veh = trajectories.(v_name);
@@ -525,8 +540,8 @@ if ~jump_to_plot
                 end
 
                 % =================================================================
-    	        %   分支5: DEKF (经典 9D-CI 批量更新)
-    	        % =================================================================
+                %   分支5: DEKF (经典 9D-CI 批量更新)
+                % =================================================================
 
                 for n = 1 : Vehicle_num
                     v_name = sprintf('V%d', n); veh = trajectories.(v_name);
@@ -561,9 +576,9 @@ if ~jump_to_plot
                 end
 
 
-    	        % =================================================================
-    	        %   分支6: DIEKF (经典 9D-CI 批量流形迭代更新)
-    	        % =================================================================
+                % =================================================================
+                %   分支6: DIEKF (经典 9D-CI 批量流形迭代更新)
+                % =================================================================
 
                 for n = 1 : Vehicle_num
                     v_name = sprintf('V%d', n); veh = trajectories.(v_name);
@@ -664,45 +679,46 @@ end
 fprintf('====================================================================================\n');
 
 %% 4. 双子图可视化
-if exist('rmse_all_dekf','var')
-    figure('Name','Multi-Vehicle Distributed Algorithms Comparison','Position',[100 100 1400 600]);
-    
-    pct_diekf = (rmse_all_dekf - rmse_all_diekf)./rmse_all_dekf * 100;
-    pct_v3 = (rmse_all_dekf - rmse_all_v3)./rmse_all_dekf * 100;
-    pct_v2 = (rmse_all_dekf - rmse_all_v2)./rmse_all_dekf * 100;
-    pct_v1 = (rmse_all_dekf - rmse_all_v1)./rmse_all_dekf * 100;
-    pct_dmlkf = (rmse_all_dekf - rmse_all_dmlkf)./rmse_all_dekf * 100;
-    
-    subplot(1,2,1);
+if exist('rmse_all_dekf', 'var')
+    figure('Name', 'Multi-Vehicle Distributed Algorithms Comparison', 'Position', [100 100 1400 600]);
+
+    pct_diekf = (rmse_all_dekf - rmse_all_diekf) ./ rmse_all_dekf * 100;
+    pct_v3 = (rmse_all_dekf - rmse_all_v3) ./ rmse_all_dekf * 100;
+    pct_v2 = (rmse_all_dekf - rmse_all_v2) ./ rmse_all_dekf * 100;
+    pct_v1 = (rmse_all_dekf - rmse_all_v1) ./ rmse_all_dekf * 100;
+    pct_dmlkf = (rmse_all_dekf - rmse_all_dmlkf) ./ rmse_all_dekf * 100;
+
+    subplot(1, 2, 1);
     hold on; grid on;
-    plot(Veh_list, rmse_all_dekf, 'b-o','LineWidth',2,'MarkerFaceColor','b','DisplayName','DEKF');
-    plot(Veh_list, rmse_all_diekf,'c-^','LineWidth',2,'MarkerFaceColor','c','DisplayName','DIEKF');
-    plot(Veh_list, rmse_all_v3,'g-s','LineWidth',2,'MarkerFaceColor','g','DisplayName','DMLKF\_V3');
-    plot(Veh_list, rmse_all_v2,'m-d','LineWidth',2,'MarkerFaceColor','m','DisplayName','DMLKF\_V2');
-    plot(Veh_list, rmse_all_v1,'r-^','LineWidth',2,'MarkerFaceColor','r','DisplayName','DMLKF\_V1');
-    plot(Veh_list, rmse_all_dmlkf,'k-p','LineWidth',2.5,'MarkerFaceColor','k','DisplayName','DMLKF');
+    plot(Veh_list, rmse_all_dekf, 'b-o', 'LineWidth', 2, 'MarkerFaceColor', 'b', 'DisplayName', 'DEKF');
+    plot(Veh_list, rmse_all_diekf, 'c-^', 'LineWidth', 2, 'MarkerFaceColor', 'c', 'DisplayName', 'DIEKF');
+    plot(Veh_list, rmse_all_v3, 'g-s', 'LineWidth', 2, 'MarkerFaceColor', 'g', 'DisplayName', 'DMLKF\_V3');
+    plot(Veh_list, rmse_all_v2, 'm-d', 'LineWidth', 2, 'MarkerFaceColor', 'm', 'DisplayName', 'DMLKF\_V2');
+    plot(Veh_list, rmse_all_v1, 'r-^', 'LineWidth', 2, 'MarkerFaceColor', 'r', 'DisplayName', 'DMLKF\_V1');
+    plot(Veh_list, rmse_all_dmlkf, 'k-p', 'LineWidth', 2.5, 'MarkerFaceColor', 'k', 'DisplayName', 'DMLKF');
     xlabel('Vehicle Number'); ylabel('Mean Euclidean RMSE (m)');
-    title('Position Error Comparison'); legend('Location','northwest');
-    
-    subplot(1,2,2);
+    title('Position Error Comparison'); legend('Location', 'northwest');
+
+    subplot(1, 2, 2);
     hold on; grid on;
-    plot(Veh_list, pct_diekf,'c-^','LineWidth',2,'MarkerFaceColor','c');
-    plot(Veh_list, pct_v3,'g-s','LineWidth',2,'MarkerFaceColor','g');
-    plot(Veh_list, pct_v2,'m-d','LineWidth',2,'MarkerFaceColor','m');
-    plot(Veh_list, pct_v1,'r-^','LineWidth',2,'MarkerFaceColor','r');
-    plot(Veh_list, pct_dmlkf,'k-p','LineWidth',2.5,'MarkerFaceColor','k');
+    plot(Veh_list, pct_diekf, 'c-^', 'LineWidth', 2, 'MarkerFaceColor', 'c');
+    plot(Veh_list, pct_v3, 'g-s', 'LineWidth', 2, 'MarkerFaceColor', 'g');
+    plot(Veh_list, pct_v2, 'm-d', 'LineWidth', 2, 'MarkerFaceColor', 'm');
+    plot(Veh_list, pct_v1, 'r-^', 'LineWidth', 2, 'MarkerFaceColor', 'r');
+    plot(Veh_list, pct_dmlkf, 'k-p', 'LineWidth', 2.5, 'MarkerFaceColor', 'k');
     xlabel('Vehicle Number'); ylabel('Improvement over DEKF (%)');
-    title('Accuracy Improvement'); legend({'DIEKF','V3','V2','V1','DMLKF'},'Location','southeast');
-    
-    sgtitle('Distributed Multi-Vehicle Localization Performance (6 Anchors)');
+    title('Accuracy Improvement'); legend({'DIEKF', 'V3', 'V2', 'V1', 'DMLKF'}, 'Location', 'southeast');
+
+    sgtitle(sprintf('Distributed Multi-Vehicle Localization Performance (6 Anchors, IMU Update %.1f Hz)', 100/imu_update_factor));
 end
 
 %% 5. 保存
 if ~jump_to_plot
-    if ~exist(save_dir,'dir'), mkdir(save_dir); end
-    save(save_path, 'Veh_list', 'rmse_all_dekf','rmse_all_diekf',...
-         'rmse_all_v3','rmse_all_v2','rmse_all_v1','rmse_all_dmlkf');
+    if ~exist(save_dir, 'dir'), mkdir(save_dir); end
+    save(save_path, 'Veh_list', 'rmse_all_dekf', 'rmse_all_diekf', ...
+        'rmse_all_v3', 'rmse_all_v2', 'rmse_all_v1', 'rmse_all_dmlkf');
     fprintf('结果已保存至：%s\n', save_path);
 end
 
+end
 fprintf('评测完成！\n');
