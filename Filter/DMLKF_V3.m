@@ -31,7 +31,8 @@ classdef DMLKF_V3
             obj.tau = tau;
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5;
-            obj.omega_self = 0.95;
+
+            obj.omega_self = 0.93;
         end
         
         %% 【接口兼容哑方法】
@@ -178,7 +179,7 @@ classdef DMLKF_V3
             s_pos = zeros(3, 1);
             
             % --- 1. 基于 CI 比例折损邻车先验精度，得到膨胀邻车协方差 ---
-            omega_neigh = (1 - 0.9) / M;
+            omega_neigh = (1 - 0.8) / M;
             Sigma_neigh_expanded = cell(M, 1);
             for i = 1:M
                 % CI规则下，等效测量误差被膨胀为 1/omega_neigh 倍 [71]

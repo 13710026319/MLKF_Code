@@ -31,7 +31,7 @@
 	            obj.tau = tau;
 	            obj.g_vec = [0; 0; -9.81];
 	            obj.mu = 1e-5; % 防止GN迭代中Hessian退化
-	            obj.omega_self = 0.93;
+                obj.omega_self = 0.93;
 	            obj.lambda_local = containers.Map('KeyType', 'double', 'ValueType', 'any');
 	            obj.lambda_remote = containers.Map('KeyType', 'double', 'ValueType', 'any');
 	        end
@@ -276,8 +276,10 @@
 	            Xi_12 = Xi_ii_12;
 	            Xi_21 = Xi_ii_12';
 	            Xi_22 = Xi_ii_22;
+
 	            % --- 2. 基于 CI 的舒尔补边缘化 (Eq. 65-68) ---
 	            omega_neigh = (1 - obj.omega_self) / M;
+
 	            P22_CI_inv = zeros(3 * M, 3 * M);
 	            for i = 1:M
 	                idx = 3*(i-1)+(1:3);

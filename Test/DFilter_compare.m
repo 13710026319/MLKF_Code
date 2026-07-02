@@ -11,7 +11,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh6_Anc6_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh9_Anc6_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat';
     if ~exist(data_file, 'file')
@@ -24,9 +24,8 @@ dt_imu = 0.01; % 100Hz 采样步长
 %% 一些超参数
 max_admm_iter = 2;
 
-SCI_rho = 0.8; % DMLKF,DMLKF_V1
-CI_rho = 2; % DMLKF_V2
-
+SCI_rho = 0.8;  % DMLKF,DMLKF_V1
+CI_rho = 1.5;     % DMLKF_V2, 发现V2的要比V1的数值大
 
 %% 算法运行开关 (Algorithm selection flags)
 run_dmlkf = 1; % 原始 DMLKF (SCI+ADMM)
@@ -34,8 +33,8 @@ run_dmlkf_v1 = 1; % 基准 DMLKF_V1 (SCI+No Joint)
 run_dmlkf_v2 = 1; % 基准 DMLKF_V2 (CI+ADMM)
 run_dmlkf_v3 = 1; % 新增基准 DMLKF_V3 (CI+No Joint)
 
-run_dekf_v1 = 1; % 经典 DEKF + CI 融合
-run_diekf_v1 = 1; % DIEKF_V1 + 全维 CI 融合
+run_dekf = 1; % 经典 DEKF + CI 融合
+run_diekf = 1; % DIEKF_V1 + 全维 CI 融合
 
 %% 2. 状态真值重建与偏置已知设定
 for n = 1 : Vehicle_num
@@ -73,15 +72,15 @@ filters = cell(Vehicle_num, 1); % 原始 DMLKF (SCI) 容器
 filters_v1 = cell(Vehicle_num, 1); % 基准 DMLKF_V1 (无联合) 容器
 filters_v2 = cell(Vehicle_num, 1); % DMLKF_V2 (纯CI融合) 容器
 filters_v3 = cell(Vehicle_num, 1); % DMLKF_V3 (纯CI融合,无联合) 容器
-filters_dekf_v1 = cell(Vehicle_num, 1);
-filters_diekf_v1 = cell(Vehicle_num, 1);
+filters_dekf = cell(Vehicle_num, 1);
+filters_diekf = cell(Vehicle_num, 1);
 
 pos_est_dmlkf = cell(Vehicle_num, 1); % DMLKF 定位结果
 pos_est_dmlkf_v1 = cell(Vehicle_num, 1); % DMLKF_V1 定位结果
 pos_est_dmlkf_v2 = cell(Vehicle_num, 1); % DMLKF_V2 定位结果
 pos_est_dmlkf_v3 = cell(Vehicle_num, 1); % DMLKF_V3 定位结果
-pos_est_dekf_v1 = cell(Vehicle_num, 1);
-pos_est_diekf_v1 = cell(Vehicle_num, 1);
+pos_est_dekf = cell(Vehicle_num, 1);
+pos_est_diekf = cell(Vehicle_num, 1);
 
 for n = 1 : Vehicle_num
     v_name = sprintf('V%d', n);
@@ -127,15 +126,15 @@ for n = 1 : Vehicle_num
         filters_v3{n} = DMLKF_V3(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
         pos_est_dmlkf_v3{n} = zeros(N_steps, 3);
     end
-    if run_dekf_v1
+    if run_dekf
         % 最后一个参数虽会被内部强制置为 0.8，但传参结构保持对齐
-        filters_dekf_v1{n} = DEKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
-        pos_est_dekf_v1{n} = zeros(N_steps, 3);
+        filters_dekf{n} = DEKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+        pos_est_dekf{n} = zeros(N_steps, 3);
     end
-    if run_diekf_v1
+    if run_diekf
         % 实例化流形迭代 EKF，最后一个参数虽会被内部强制置为 0.8，但传参结构保持对齐
-        filters_diekf_v1{n} = DIEKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
-        pos_est_diekf_v1{n} = zeros(N_steps, 3);
+        filters_diekf{n} = DIEKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+        pos_est_diekf{n} = zeros(N_steps, 3);
     end
 end
 
@@ -193,15 +192,15 @@ for k = 1 : N_steps
             filters_v3{n} = filters_v3{n}.predict();
             filters_v3{n} = filters_v3{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
         end
-        % 5. 经典 DEKF_V1 更新
-        if run_dekf_v1
-            filters_dekf_v1{n} = filters_dekf_v1{n}.predict();
-            filters_dekf_v1{n} = filters_dekf_v1{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+        % 5. 经典 DEKF 更新
+        if run_dekf
+            filters_dekf{n} = filters_dekf{n}.predict();
+            filters_dekf{n} = filters_dekf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
         end
-        % 6. 经典流形迭代 DIEKF_V1 更新 (内部自主进行 MAP 迭代收敛)
-        if run_diekf_v1
-            filters_diekf_v1{n} = filters_diekf_v1{n}.predict();
-            filters_diekf_v1{n} = filters_diekf_v1{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
+        % 6. 经典流形迭代 DIEKF 更新 (内部自主进行 MAP 迭代收敛)
+        if run_diekf
+            filters_diekf{n} = filters_diekf{n}.predict();
+            filters_diekf{n} = filters_diekf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
         end
     end
 
@@ -231,13 +230,13 @@ for k = 1 : N_steps
             p_est_shared_v3 = cell(Vehicle_num, 1);
             Sigma_pos_shared_v3 = cell(Vehicle_num, 1);
         end
-        if run_dekf_v1
-            p_est_shared_dekf_v1 = cell(Vehicle_num, 1);
-            Sigma_pos_shared_dekf_v1 = cell(Vehicle_num, 1);
+        if run_dekf
+            p_est_shared_dekf = cell(Vehicle_num, 1);
+            Sigma_pos_shared_dekf = cell(Vehicle_num, 1);
         end
-        if run_diekf_v1
-            p_est_shared_diekf_v1 = cell(Vehicle_num, 1);
-            Sigma_pos_shared_diekf_v1 = cell(Vehicle_num, 1);
+        if run_diekf
+            p_est_shared_diekf = cell(Vehicle_num, 1);
+            Sigma_pos_shared_diekf = cell(Vehicle_num, 1);
         end
 
 
@@ -263,14 +262,14 @@ for k = 1 : N_steps
                 [p_est_shared_v3{n}, Sigma_pos_shared_v3{n}] = ...
                     filters_v3{n}.get_marginalized_position_info();
             end
-            if run_dekf_v1
-                [p_est_shared_dekf_v1{n}, Sigma_pos_shared_dekf_v1{n}] = ...
-                    filters_dekf_v1{n}.get_marginalized_position_info();
+            if run_dekf
+                [p_est_shared_dekf{n}, Sigma_pos_shared_dekf{n}] = ...
+                    filters_dekf{n}.get_marginalized_position_info();
             end
             % DIEKF_V1 位置与协方差提取
-            if run_diekf_v1
-                [p_est_shared_diekf_v1{n}, Sigma_pos_shared_diekf_v1{n}] = ...
-                    filters_diekf_v1{n}.get_marginalized_position_info();
+            if run_diekf
+                [p_est_shared_diekf{n}, Sigma_pos_shared_diekf{n}] = ...
+                    filters_diekf{n}.get_marginalized_position_info();
             end
         end
 
@@ -566,7 +565,7 @@ for k = 1 : N_steps
         % =================================================================
         %   分支5: DEKF_V1 (15D 经典 DEKF + CI 联合测距更新)
         % =================================================================
-        if run_dekf_v1
+        if run_dekf
             for n = 1 : Vehicle_num
                 v_name = sprintf('V%d', n); veh = trajectories.(v_name);
                 anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2 : end)';
@@ -579,18 +578,18 @@ for k = 1 : N_steps
 
                 for idx = 1 : M_neighbors
                     nid = active_neighbors(idx);
-                    neigh_positions(idx, :) = p_est_shared_dekf_v1{nid}';
-                    neigh_Sigma_pos{idx} = Sigma_pos_shared_dekf_v1{nid};
+                    neigh_positions(idx, :) = p_est_shared_dekf{nid}';
+                    neigh_Sigma_pos{idx} = Sigma_pos_shared_dekf{nid};
                     rel_val = veh.UWB_Relative(k_uwb, 1 + nid);
                     if isnan(rel_val) || isinf(rel_val)
-                        rel_val = norm(p_est_shared_dekf_v1{n} - p_est_shared_dekf_v1{nid});
+                        rel_val = norm(p_est_shared_dekf{n} - p_est_shared_dekf{nid});
                     end
                     relative_ranges(idx) = rel_val;
                 end
 
                 for a_idx = 1 : length(anchor_ranges_raw)
                     if isnan(anchor_ranges_raw(a_idx)) || isinf(anchor_ranges_raw(a_idx))
-                        anchor_ranges_raw(a_idx) = norm(p_est_shared_dekf_v1{n} - anchor_positions_veh(a_idx, :)');
+                        anchor_ranges_raw(a_idx) = norm(p_est_shared_dekf{n} - anchor_positions_veh(a_idx, :)');
                     end
                 end
 
@@ -598,7 +597,7 @@ for k = 1 : N_steps
                 sigma_z = UWB_noise_params.sigma_rel;
 
                 % EKF 更新不使用 primal 优化结果，传入 []
-                filters_dekf_v1{n} = filters_dekf_v1{n}.apply_uwb_update([], ...
+                filters_dekf{n} = filters_dekf{n}.apply_uwb_update([], ...
                     anchor_ranges_raw, anchor_positions_veh, ...
                     active_neighbors, neigh_positions, ...
                     neigh_Sigma_pos, relative_ranges, sigma_s, sigma_z);
@@ -607,7 +606,7 @@ for k = 1 : N_steps
         % =================================================================
         %   分支6: DIEKF_V1 (15D 经典迭代 DEKF + CI 联合测距更新)
         % =================================================================
-        if run_diekf_v1
+        if run_diekf
             for n = 1 : Vehicle_num
                 v_name = sprintf('V%d', n); veh = trajectories.(v_name);
                 anchor_ranges_raw = veh.UWB_Anchor(k_uwb, 2 : end)';
@@ -620,18 +619,18 @@ for k = 1 : N_steps
 
                 for idx = 1 : M_neighbors
                     nid = active_neighbors(idx);
-                    neigh_positions(idx, :) = p_est_shared_diekf_v1{nid}';
-                    neigh_Sigma_pos{idx} = Sigma_pos_shared_diekf_v1{nid};
+                    neigh_positions(idx, :) = p_est_shared_diekf{nid}';
+                    neigh_Sigma_pos{idx} = Sigma_pos_shared_diekf{nid};
                     rel_val = veh.UWB_Relative(k_uwb, 1 + nid);
                     if isnan(rel_val) || isinf(rel_val)
-                        rel_val = norm(p_est_shared_diekf_v1{n} - p_est_shared_diekf_v1{nid});
+                        rel_val = norm(p_est_shared_diekf{n} - p_est_shared_diekf{nid});
                     end
                     relative_ranges(idx) = rel_val;
                 end
 
                 for a_idx = 1 : length(anchor_ranges_raw)
                     if isnan(anchor_ranges_raw(a_idx)) || isinf(anchor_ranges_raw(a_idx))
-                        anchor_ranges_raw(a_idx) = norm(p_est_shared_diekf_v1{n} - anchor_positions_veh(a_idx, :)');
+                        anchor_ranges_raw(a_idx) = norm(p_est_shared_diekf{n} - anchor_positions_veh(a_idx, :)');
                     end
                 end
 
@@ -639,7 +638,7 @@ for k = 1 : N_steps
                 sigma_z = UWB_noise_params.sigma_rel;
 
                 % 迭代 EKF 协同 MAP 求解不依赖 ADMM 对偶估计，第一个参数传入 []
-                filters_diekf_v1{n} = filters_diekf_v1{n}.apply_uwb_update([], ...
+                filters_diekf{n} = filters_diekf{n}.apply_uwb_update([], ...
                     anchor_ranges_raw, anchor_positions_veh, ...
                     active_neighbors, neigh_positions, ...
                     neigh_Sigma_pos, relative_ranges, sigma_s, sigma_z);
@@ -663,11 +662,11 @@ for k = 1 : N_steps
         if run_dmlkf_v3
             pos_est_dmlkf_v3{n}(k, :) = filters_v3{n}.state.p';
         end
-        if run_dekf_v1
-            pos_est_dekf_v1{n}(k, :) = filters_dekf_v1{n}.state.p';
+        if run_dekf
+            pos_est_dekf{n}(k, :) = filters_dekf{n}.state.p';
         end
-        if run_diekf_v1
-            pos_est_diekf_v1{n}(k, :) = filters_diekf_v1{n}.state.p';
+        if run_diekf
+            pos_est_diekf{n}(k, :) = filters_diekf{n}.state.p';
         end
     end
 end
@@ -695,11 +694,11 @@ end
 if run_dmlkf_v3
     [errors_dmlkf_v3, rmse_dmlkf_v3] = calculate_position_errors(pos_est_dmlkf_v3, pos_true);
 end
-if run_dekf_v1
-    [errors_dekf_v1, rmse_dekf_v1] = calculate_position_errors(pos_est_dekf_v1, pos_true);
+if run_dekf
+    [errors_dekf, rmse_dekf] = calculate_position_errors(pos_est_dekf, pos_true);
 end
-if run_diekf_v1
-    [errors_diekf_v1, rmse_diekf_v1] = calculate_position_errors(pos_est_diekf_v1, pos_true);
+if run_diekf
+    [errors_diekf, rmse_diekf] = calculate_position_errors(pos_est_diekf, pos_true);
 end
 
 % 组装分布式定位对照报表并显示
@@ -753,23 +752,23 @@ if run_dmlkf_v3
     var_names{end + 1} = 'V3_Euc_RMSE';
 end
 
-if run_dekf_v1
-    DEKF_V1_Euc_RMSE = zeros(Vehicle_num + 1, 1);
+if run_dekf
+    DEKF_Euc_RMSE = zeros(Vehicle_num + 1, 1);
     for n = 1 : Vehicle_num
-        DEKF_V1_Euc_RMSE(n) = rmse_dekf_v1(n).euc_rmse;
+        DEKF_Euc_RMSE(n) = rmse_dekf(n).euc_rmse;
     end
-    DEKF_V1_Euc_RMSE(Vehicle_num + 1) = mean(DEKF_V1_Euc_RMSE(1 : Vehicle_num));
-    vars{end + 1} = DEKF_V1_Euc_RMSE;
+    DEKF_Euc_RMSE(Vehicle_num + 1) = mean(DEKF_Euc_RMSE(1 : Vehicle_num));
+    vars{end + 1} = DEKF_Euc_RMSE;
     var_names{end + 1} = 'DEKF_V1_Euc_RMSE';
 end
 
-if run_diekf_v1
-    DIEKF_V1_Euc_RMSE = zeros(Vehicle_num + 1, 1);
+if run_diekf
+    DIEKF_Euc_RMSE = zeros(Vehicle_num + 1, 1);
     for n = 1 : Vehicle_num
-        DIEKF_V1_Euc_RMSE(n) = rmse_diekf_v1(n).euc_rmse;
+        DIEKF_Euc_RMSE(n) = rmse_diekf(n).euc_rmse;
     end
-    DIEKF_V1_Euc_RMSE(Vehicle_num + 1) = mean(DIEKF_V1_Euc_RMSE(1 : Vehicle_num));
-    vars{end + 1} = DIEKF_V1_Euc_RMSE;
+    DIEKF_Euc_RMSE(Vehicle_num + 1) = mean(DIEKF_Euc_RMSE(1 : Vehicle_num));
+    vars{end + 1} = DIEKF_Euc_RMSE;
     var_names{end + 1} = 'DIEKF_V1_Euc_RMSE';
 end
 
@@ -791,11 +790,11 @@ if ~isempty(vars)
     if run_dmlkf_v3
         fprintf(' DMLKF_V3 (纯CI融合 + 无联合邻车估计/GN)   全局平均欧氏定位误差: %.4f m\n', V3_Euc_RMSE(Vehicle_num + 1));
     end
-    if run_dekf_v1
-        fprintf(' DEKF_V1   (经典 DEKF + 全维 CI)         全局平均欧氏定位误差: %.4f m\n', DEKF_V1_Euc_RMSE(Vehicle_num + 1));
+    if run_dekf
+        fprintf(' DEKF   (经典 DEKF + 全维 CI)         全局平均欧氏定位误差: %.4f m\n', DEKF_Euc_RMSE(Vehicle_num + 1));
     end
-    if run_diekf_v1
-        fprintf(' DIEKF_V1  (经典迭代 DEKF + 全维 CI)   全局平均欧氏定位误差: %.4f m\n', DIEKF_V1_Euc_RMSE(Vehicle_num + 1));
+    if run_diekf
+        fprintf(' DIEKF  (经典迭代 DEKF + 全维 CI)   全局平均欧氏定位误差: %.4f m\n', DIEKF_Euc_RMSE(Vehicle_num + 1));
     end
 
     % 根据开关状态自适应计算增益对比
@@ -811,13 +810,13 @@ if ~isempty(vars)
         improvement_v3 = (V3_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / V3_Euc_RMSE(Vehicle_num + 1) * 100;
         fprintf(' [增益对比] 相比V3，SCI+联合优化使整体定位精度提升了: %.2f%%\n', improvement_v3);
     end
-    if run_dmlkf && run_dekf_v1
-        improvement_dekf_v1 = (DEKF_V1_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / DEKF_V1_Euc_RMSE(Vehicle_num + 1) * 100;
-        fprintf(' [增益对比] 相比经典DEKF_V1，DMLKF (联合共识+SCI) 使定位精度提升了: %.2f%%\n', improvement_dekf_v1);
+    if run_dmlkf && run_dekf
+        improvement_dekf = (DEKF_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / DEKF_Euc_RMSE(Vehicle_num + 1) * 100;
+        fprintf(' [增益对比] 相比经典DEKF，DMLKF (联合共识+SCI) 使定位精度提升了: %.2f%%\n', improvement_dekf);
     end
-    if run_dmlkf && run_diekf_v1
-        improvement_diekf_v1 = (DIEKF_V1_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / DIEKF_V1_Euc_RMSE(Vehicle_num + 1) * 100;
-        fprintf(' [增益对比] 相比经典迭代DIEKF_V1，DMLKF (联合共识+SCI) 使定位精度提升了: %.2f%%\n', improvement_diekf_v1);
+    if run_dmlkf && run_diekf
+        improvement_diekf = (DIEKF_Euc_RMSE(Vehicle_num + 1) - DMLKF_Euc_RMSE(Vehicle_num + 1)) / DIEKF_Euc_RMSE(Vehicle_num + 1) * 100;
+        fprintf(' [增益对比] 相比经典迭代DIEKF，DMLKF (联合共识+SCI) 使定位精度提升了: %.2f%%\n', improvement_diekf);
     end
 
     fprintf('=============================================================================================================\n');
@@ -856,13 +855,13 @@ if ~isempty(vars)
             legend_entries{end + 1} = 'DMLKF\_V3 (CI+No Joint)';
         end
 
-        if run_dekf_v1
-            plot(time_arr, errors_dekf_v1(n).euc_err, 'm-.', 'LineWidth', 1.2); % 采用品红色点划线
-            legend_entries{end + 1} = 'DEKF\_V1 (Classic CI)';
+        if run_dekf
+            plot(time_arr, errors_dekf(n).euc_err, 'm-.', 'LineWidth', 1.2); % 采用品红色点划线
+            legend_entries{end + 1} = 'DEKF (Classic CI)';
         end
-        if run_diekf_v1
-            plot(time_arr, errors_diekf_v1(n).euc_err, 'c--', 'LineWidth', 1.2); % 品青色虚线
-            legend_entries{end + 1} = 'DIEKF\_V1 (Iterated CI)';
+        if run_diekf
+            plot(time_arr, errors_diekf(n).euc_err, 'c--', 'LineWidth', 1.2); % 品青色虚线
+            legend_entries{end + 1} = 'DIEKF (Iterated CI)';
         end
 
         title(sprintf('Vehicle %d Euclidean Error', n));

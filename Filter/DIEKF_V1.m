@@ -1,42 +1,52 @@
-classdef DIEKF_V1
-    % DIEKF_V1: 15维分布式迭代扩展卡尔曼滤波器类
-    % 采用固定先验切空间 MAP 迭代架构，含严格姿态右雅可比映射与全维等比例步长保护
+classdef DIEKF
+    % DIEKF: 9维经典误差状态分布式迭代EKF类 (纯CI批量迭代融合版)
+    % 选择性CI: 先验协方差只放大位置状态(速度状态为了数值而放大了1.03倍)
+    % 更新步只对整体R当中相对测距部分进行等效噪声放大
+    % 状态结构：.p (3x1), .v (3x1), .R (3x3)，IMU作为传播输入，UWB测量进行流形迭代更新
     
     properties
         id              % 节点ID (1, 2, 3, 4...)
-        state           % 状态结构体: .p(3x1), .v(3x1), .a(3x1), .R(3x3), .omega(3x1)
-        P               % 15x15 状态误差协方差矩阵
-        Q               % 15x15 过程噪声协方差矩阵
-        Sigma_a         % 3x3 加速度计噪声协方差
-        Sigma_w         % 3x3 陀螺仪噪声协方差
-        g_vec           % 3x1 重力向量
-        tau             % IMU采样周期 (秒)
-        mu              % 岭正则化参数 (防御工作点退化)
-        omega_self      % 本车CI权重 (类内部强制预设为 0.8)
+        state           % 状态结构体: .p(3x1), .v(3x1), .R(3x3)
+        P               % 9x9 本地状态误差协方差矩阵
+        Q               % 9x9 离散单步系统过程噪声协方差矩阵 (严格对齐预设)
+        g_vec           % 3D 重力加速度常数 (通常为 [0; 0; -9.81])
+        tau             % IMU采样预测周期 dt (秒)
+        omega_self      % 本车CI权重
+        omega_neigh     % 邻居CI权重
+        mu              % 高斯-牛顿正则化参数 (防御NaN)
     end
     
     methods
-        %% 构造函数 (签名与各版本严格一致)
-        function obj = DIEKF_V1(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, ~)
+        %% 构造函数 (9维经典结构)
+        function obj = DIEKF(id, init_state, init_cov, tau)
             obj.id = id;
-            obj.state = init_state;
+            obj.state.p = init_state.p;
+            obj.state.v = init_state.v;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
             
-            % 保证初始协方差不奇异
-            init_cov_safe = init_cov + 1e-10 * eye(15);
-            obj.P = 0.5 * (init_cov_safe + init_cov_safe');
+            % 严格对齐通道：提取 15D 的位置(1:3)、速度(4:6)以及姿态(10:12)协方差重组为 9D 协方差
+            if size(init_cov, 1) == 15
+                obj.P = blkdiag(init_cov(1:3, 1:3), init_cov(4:6, 4:6), init_cov(10:12, 10:12));
+            else
+                obj.P = init_cov;
+            end
+            obj.P = obj.P + 1e-10 * eye(9); % 保证正定防 NaN
             
-            obj.Q = Q_matrix;
-            obj.Sigma_a = Sigma_a;
-            obj.Sigma_w = Sigma_w;
+            Q_sigmas_9d = [ ...
+                0.0005 * ones(1,3), ... % 位置过程噪声标准差 
+                0.005 * ones(1,3), ...  % 速度过程噪声标准差 
+                0.0005 * ones(1,3) ...  % 姿态过程噪声标准差 
+                ];
+            obj.Q = diag(Q_sigmas_9d.^2);
+            
             obj.tau = tau;
+            obj.omega_self = 0.8;
+            obj.omega_neigh = 1- obj.omega_self;
             obj.g_vec = [0; 0; -9.81];
-            obj.mu = 1e-6; 
-            
-            obj.omega_self = 0.95;
+            obj.mu = 1e-4;
         end
         
-        %% 接口兼容哑方法
+        %% 【接口兼容哑方法】
         function obj = reset_dual_variables(obj)
         end
         function s_admm = solve_primal_public(obj, s_admm_init, varargin)
@@ -45,249 +55,164 @@ classdef DIEKF_V1
         function obj = update_dual(obj, varargin)
         end
         
-        %% 3.0 位置边缘化数据提取接口 (适配外部 compare.m 脚本)
+        %% 1.2 标称状态与误差协方差时间传播 (Prediction Step - 100Hz)
+        function obj = predict(obj, imu_acc, imu_gyro)
+            % 提取当前状态
+            p_t = obj.state.p;
+            v_t = obj.state.v;
+            R_t = obj.state.R;
+            dt = obj.tau;
+            
+            % 1. 标称状态时间积分 (IMU作为系统输入驱动)
+            acc_nav = R_t * imu_acc + obj.g_vec; % 转换至导航系并叠加重力
+            obj.state.p = p_t + dt * v_t + 0.5 * dt^2 * acc_nav;
+            obj.state.v = v_t + dt * acc_nav;
+            obj.state.R = obj.robust_orthonormalize(R_t * obj.so3_exp_safe(dt * imu_gyro));
+            
+            % 2. 构造 9 维误差状态转移矩阵 A (对应经典惯导误差方程)
+            A = eye(9);
+            A(1:3, 4:6) = dt * eye(3);                      % \delta p <- \delta v
+            A(4:6, 7:9) = -dt * R_t * obj.skew_matrix(imu_acc); % \delta v <- \delta \phi (比力驱动)
+            A(7:9, 7:9) = obj.so3_exp_safe(-dt * imu_gyro);  % \delta \phi <- \delta \phi
+            
+            % 3. 联合协方差传播 (对齐离散噪声更新)
+            obj.P = A * obj.P * A' + obj.Q;
+            obj.P = 0.5 * (obj.P + obj.P'); % 数值对称正定保护
+        end
+        
+        %% 3.0 UWB 状态与协方差投影 (边缘化输出接口 - 邻居车辆调用)
         function [p_est, Sigma_pos] = get_marginalized_position_info(obj)
             p_est = obj.state.p;
             Sigma_pos = obj.P(1:3, 1:3);
             Sigma_pos = 0.5 * (Sigma_pos + Sigma_pos');
         end
         
-        %% 1.2 状态与协方差高频传播 (Prediction Step - 100Hz)
-        function obj = predict(obj)
-            p_old = obj.state.p;
-            v_old = obj.state.v;
-            a_old = obj.state.a;
-            R_old = obj.state.R;
-            w_old = obj.state.omega;
-            t_step = obj.tau;
-            
-            % 名义状态传播 (同DMLKF一致)
-            obj.state.p = p_old + t_step * v_old + (t_step^2 / 2) * a_old;
-            obj.state.v = v_old + t_step * a_old;
-            obj.state.a = a_old;
-            
-            exp_w = obj.so3_exp_safe(t_step * w_old);
-            obj.state.R = obj.robust_orthonormalize(R_old * exp_w);
-            obj.state.omega = w_old;
-            
-            % 构造 Jacobian A_t
-            A_t = eye(15);
-            A_t(1:3, 4:6)   = t_step * eye(3);
-            A_t(1:3, 7:9)   = (t_step^2 / 2) * eye(3);
-            A_t(4:6, 7:9)   = t_step * eye(3);
-            
-            A_t(10:12, 10:12) = obj.so3_exp_safe(-t_step * w_old);
-            A_t(10:12, 13:15) = t_step * obj.so3_right_jacobian_safe(t_step * w_old);
-            
-            % 协方差预测递推
-            P_pred = A_t * obj.P * A_t' + obj.Q;
-            P_pred = 0.5 * (P_pred + P_pred');
-            obj.P = obj.sanitize_matrix(P_pred);
-        end
-        
-        %% 2.2 局部高频 MAP 迭代 IMU 更新 (IMU Update - 100Hz)
-        function obj = update_imu(obj, raw_acc, raw_gyro, bias_a, bias_w)
-            acc_tilde = raw_acc - bias_a;
-            gyro_tilde = raw_gyro - bias_w;
-            R_IMU = blkdiag(obj.Sigma_a, obj.Sigma_w);
-            
-            % 暂存先验状态 (作为固定先验名义原点 check_x)
-            check_p = obj.state.p;
-            check_v = obj.state.v;
-            check_a = obj.state.a;
-            check_R = obj.state.R;
-            check_omega = obj.state.omega;
-            
-            % 初始化切空间先验误差状态
-            delta_theta_0 = zeros(15, 1);
-            
-            % 内部非线性迭代求解 MAP 优化
-            max_iter = 5;
-            for iter = 1:max_iter
-                % 2.1 映射获得当前迭代工作点的状态估计
-                p_iter = check_p + delta_theta_0(1:3);
-                v_iter = check_v + delta_theta_0(4:6);
-                a_iter = check_a + delta_theta_0(7:9);
-                R_iter = obj.robust_orthonormalize(check_R * obj.so3_exp_safe(delta_theta_0(10:12)));
-                w_iter = check_omega + delta_theta_0(13:15);
-                
-                % 2.2 评估固定先验切空间的转换雅可比 (正向右雅可比 J_r)
-                delta_phi_0_curr = delta_theta_0(10:12);
-                J_manifold = eye(15);
-                J_manifold(10:12, 10:12) = obj.so3_right_jacobian_safe(delta_phi_0_curr);
-                
-                % 2.3 评估工作点处的局部 EKF 观测雅可比
-                H_local = zeros(6, 15);
-                H_local(1:3, 7:9)   = R_iter';
-                H_local(1:3, 10:12) = obj.skew_matrix(R_iter' * (a_iter - obj.g_vec));
-                H_local(4:6, 13:15) = eye(3);
-                
-                % 2.4 链式相乘获得先验切空间等效观测雅可比
-                H_prior = H_local * J_manifold;
-                
-                % 2.5 评估先验 nominal 状态偏差 (check_x \boxminus x_iter)
-                delta_x_prior = zeros(15, 1);
-                delta_x_prior(1:3) = check_p - p_iter;
-                delta_x_prior(4:6) = check_v - v_iter;
-                delta_x_prior(7:9) = check_a - a_iter;
-                delta_x_prior(10:12) = obj.so3_log_safe(R_iter' * check_R);
-                delta_x_prior(13:15) = check_omega - w_iter;
-                
-                % 2.6 计算 MAP 等效创新向量
-                r_acc = acc_tilde - R_iter' * (a_iter - obj.g_vec);
-                r_gyro = gyro_tilde - w_iter;
-                r_meas = [r_acc; r_gyro];
-                
-                r_MAP = r_meas - H_local * delta_x_prior;
-                
-                % 2.7 滤波更新求解
-                S_IMU = H_prior * obj.P * H_prior' + R_IMU;
-                S_IMU_reg = S_IMU + obj.mu * eye(6);
-                
-                K_gain = obj.P * H_prior' / S_IMU_reg;
-                delta_theta_0_new = K_gain * r_MAP;
-                
-                % 检查收敛性并推进迭代
-                diff_step = norm(delta_theta_0_new - delta_theta_0);
-                delta_theta_0 = delta_theta_0_new;
-                
-                if diff_step < 1e-5, break; end
-            end
-            
-            % 迭代收敛，状态最终更新
-            obj.state.p = check_p + delta_theta_0(1:3);
-            obj.state.v = check_v + delta_theta_0(4:6);
-            obj.state.a = check_a + delta_theta_0(7:9);
-            obj.state.R = obj.robust_orthonormalize(check_R * obj.so3_exp_safe(delta_theta_0(10:12)));
-            obj.state.omega = check_omega + delta_theta_0(13:15);
-            
-            % 一次性 Joseph 形式协方差后验更新
-            I_15 = eye(15);
-            ImKH = I_15 - K_gain * H_prior;
-            obj.P = ImKH * obj.P * ImKH' + K_gain * R_IMU * K_gain';
-            
-            obj.P = 0.5 * (obj.P + obj.P');
-            obj.P = obj.sanitize_matrix(obj.P);
-        end
-        
-        %% 3.4 堆叠协同 UWB MAP 迭代更新与全维 CI 融合 (UWB Update - 10Hz)
+        %% 【核心重构】标准 CI 批量迭代更新步 (IEKF 姿态/位置流形迭代求解)
         function obj = apply_uwb_update(obj, ~, anchor_ranges, anchor_positions, ...
                                         neighbor_ids, neighbor_positions, ...
                                         neighbor_Sigma_pos, relative_ranges, sigma_s, sigma_z)
             K = length(anchor_ranges);
             M = length(neighbor_ids);
-            L = K + M;
             
-            if L == 0
-                return;
-            end
+            if (K + M) == 0, return; end
             
-            % 1. CI 全维放大本车先验协方差 (未观测成分随之放大，后期通过 MAP 协同约束)
-            P_scaled = (1.0 / obj.omega_self) * obj.P;
+            % --- 1. 本车先验协方差 CI 比例膨胀 ---
+            D_factor = 1 / sqrt(obj.omega_self);
+            D = diag([D_factor * ones(1, 3), 1.03 * ones(1, 3), ones(1, 3)]); % 构造 9x9 对角缩放矩阵
+            P_scaled = D * obj.P * D; % 两侧对称相乘，严格保持对称正定性
+            P_scaled = 0.5 * (P_scaled + P_scaled');
             
-            % 暂存先验状态作为 MAP 固定原点 check_p
-            check_p = obj.state.p;
-            check_v = obj.state.v;
-            check_a = obj.state.a;
-            check_R = obj.state.R;
-            check_omega = obj.state.omega;
-            
-            % 初始化先验切空间状态误差
-            delta_theta_0 = zeros(15, 1);
-            
-            % 迭代递推解算
-            max_iter = 5;
-            for iter = 1:max_iter
-                p_iter = check_p + delta_theta_0(1:3);
+            % --- 2. 基于标称先验初始化迭代变量 ---
+            dx = zeros(9, 1); % 先验流形切空间中的迭代扰动变量
+            y_meas = [anchor_ranges; relative_ranges];
+
+            % 迭代上限通常设为 10 次
+            max_iekf_iter = 10;
+            for iter = 1:max_iekf_iter
+                % A. 计算当前迭代工作点标称状态 (流形指数更新)
+                p_curr = obj.state.p + dx(1:3);
                 
-                % 构造堆叠测距残差、雅可比与时变噪声
-                r_meas = zeros(L, 1);
-                H_local = zeros(L, 15);
-                R_joint = zeros(L, L);
+                % B. 计算当前迭代工作点处的测量估值与雅可比
+                h_val = zeros(K + M, 1);
+                H = zeros(K + M, 9);
+                R_list = zeros(K + M, 1);
                 
-                % A. 基站相对测距
+                % 基站测距
                 for k = 1:K
-                    vec = p_iter - anchor_positions(k, :)';
-                    dist = max(norm(vec), 1e-6);
-                    u_k = vec / dist;
-                    
-                    r_meas(k) = anchor_ranges(k) - dist;
-                    H_local(k, 1:3) = u_k';
-                    R_joint(k, k) = sigma_s^2;
+                    c_k = anchor_positions(k, :)';
+                    dist = norm(p_curr - c_k);
+                    if dist < 1e-6, dist = 1e-6; end
+                    h_val(k) = dist;
+                    u_k = (p_curr - c_k) / dist;
+                    H(k, 1:3) = u_k';
+                    R_list(k) = sigma_s^2;
                 end
                 
-                % B. 邻车协同测距
-                for m = 1:M
-                    idx = K + m;
-                    p_neigh = neighbor_positions(m, :)';
+                % 协同测距 (基于当前更新的位置方向动态计算 CI 噪声膨胀)
+                for idx = 1:M
+                    p_j = neighbor_positions(idx, :)';
+                    dist = norm(p_curr - p_j);
+                    if dist < 1e-6, dist = 1e-6; end
+                    h_val(K + idx) = dist;
+                    u_j = (p_curr - p_j) / dist;
+                    H(K + idx, 1:3) = u_j';
                     
-                    vec = p_iter - p_neigh;
-                    dist = max(norm(vec), 1e-6);
-                    u_j = vec / dist;
-                    
-                    rel_val = relative_ranges(m);
-                    r_meas(idx) = rel_val - dist;
-                    H_local(idx, 1:3) = u_j';
-                    
-                    % 经典 CI 比例膨胀邻车先验精度
-                    P_neigh_pos = neighbor_Sigma_pos{m};
-                    denom_protect = max(1.0 - 0.9, 1e-6); % 邻车除零防御
-                    P_neigh_scaled = (1.0 / denom_protect) * P_neigh_pos;
-                    
-                    % 在迭代工作点重新投射等效测量噪声
-                    R_joint(idx, idx) = sigma_z^2 + u_j' * P_neigh_scaled * u_j;
+                    % 动态噪声膨胀：基础测距方差 + 膨胀后的邻车不确定性投影
+                    Sigma_pos_j_CI = (1 / obj.omega_neigh) * neighbor_Sigma_pos{idx};
+                    R_list(K + idx) = sigma_z^2 + u_j' * Sigma_pos_j_CI * u_j;
                 end
                 
-                % C. 在位置切空间，雅可比链式转换等价于 H_local 本身 (J_manifold 位置块为 I_3)
-                H_prior = H_local;
+                R_cov = diag(R_list);
+                y_err = y_meas - h_val;
                 
-                % D. 计算先验位置 nominal 偏差 (check_p - p_iter)
-                delta_x_prior = zeros(15, 1);
-                delta_x_prior(1:3) = check_p - p_iter;
-                
-                % E. 计算等效 MAP 残差
-                r_MAP = r_meas - H_local * delta_x_prior;
-                
-                % F. EKF MAP 解算
-                S = H_prior * P_scaled * H_prior' + R_joint;
-                S_reg = S + obj.mu * eye(L);
-                
-                K_gain = P_scaled * H_prior' / S_reg;
-                delta_theta_0_new = K_gain * r_MAP;
-                
-                % 15维等比例步长阶段，维持复合空间物理一致性
-                max_pos_step = 0.5;
-                norm_pos = norm(delta_theta_0_new(1:3));
-                if norm_pos > max_pos_step
-                    delta_theta_0_new = delta_theta_0_new * (max_pos_step / norm_pos);
+                % C. IEKF 标准迭代滤波更新步骤
+                S = H * P_scaled * H' + R_cov;
+                S_reg = S + obj.mu * eye(size(S));
+                K_gain = P_scaled * H' / S_reg;
+                if any(isnan(K_gain(:))) || any(isinf(K_gain(:)))
+                    K_gain = P_scaled * H' * pinv(S);
                 end
                 
-                diff_step = norm(delta_theta_0_new - delta_theta_0);
-                delta_theta_0 = delta_theta_0_new;
+                % 在先验约束下计算下一步迭代误差状态量 (对齐 IEKF 扰动形式)
+                dx_new = K_gain * (y_err + H * dx);
                 
-                if diff_step < 1e-5, break; end
+                % 增量极其微小时提前终止
+                if norm(dx_new - dx) < 1e-4
+                    dx = dx_new;
+                    break;
+                end
+                dx = dx_new;
             end
             
-            % 迭代收敛，Nominal 状态更新
-            obj.state.p = check_p + delta_theta_0(1:3);
-            obj.state.v = check_v + delta_theta_0(4:6);
-            obj.state.a = check_a + delta_theta_0(7:9);
-            obj.state.R = obj.robust_orthonormalize(check_R * obj.so3_exp_safe(delta_theta_0(10:12)));
-            obj.state.omega = check_omega + delta_theta_0(13:15);
+            % --- 3. 最终流形回馈纠正标称状态 ---
+            dx = obj.sanitize_vector(dx);
+            obj.state.p = obj.state.p + dx(1:3);
+            obj.state.v = obj.state.v + dx(4:6);
+            obj.state.R = obj.robust_orthonormalize(obj.state.R * obj.so3_exp_safe(dx(7:9)));
             
-            % 协方差 Joseph 形式后延更新
-            I_15 = eye(15);
-            ImKH = I_15 - K_gain * H_prior;
-            obj.P = ImKH * P_scaled * ImKH' + K_gain * R_joint * K_gain';
-            
+            % --- 4. 在最终收敛工作点处更新后验误差协方差 (标准 CI 格式) ---
+            obj.P = (eye(9) - K_gain * H) * P_scaled;
             obj.P = 0.5 * (obj.P + obj.P');
             obj.P = obj.sanitize_matrix(obj.P);
         end
+        
+        %% 单车退化 UWB 更新
+        function obj = update_uwb_anchor_only(obj, anchor_ranges, anchor_positions, sigma_s)
+            K = length(anchor_ranges);
+            s_pos = zeros(3, 1);
+            p_prior = obj.state.p;
+            for iter = 1:5
+                p_est = p_prior + s_pos;
+                r = zeros(K, 1); H = zeros(K, 3);
+                for k = 1:K
+                    vec = p_est - anchor_positions(k, :)';
+                    dist = max(norm(vec), 1e-6);
+                    H(k, :) = -vec' / dist;
+                    r(k) = anchor_ranges(k) - dist;
+                end
+                Hessian = (1/sigma_s^2) * (H' * H);
+                grad = (1/sigma_s^2) * (H' * r);
+                step = obj.safe_solve(Hessian, grad, obj.mu);
+                s_pos = s_pos - step;
+            end
+            Lambda_anc = (1/sigma_s^2) * (H' * H);
+            lambda_anc = Lambda_anc * s_pos;
+            Lambda_full = zeros(9, 9); Lambda_full(1:3, 1:3) = Lambda_anc;
+            lambda_full = zeros(9, 1);  lambda_full(1:3) = lambda_anc;
+            
+            I_post = obj.safe_inv(obj.P) + Lambda_full;
+            Sigma_post = obj.safe_inv(I_post);
+            delta_theta = Sigma_post * lambda_full;
+            
+            obj.state.p = obj.state.p + delta_theta(1:3);
+            obj.state.v = obj.state.v + delta_theta(4:6);
+            obj.state.R = obj.robust_orthonormalize(obj.state.R * obj.so3_exp_safe(delta_theta(7:9)));
+            obj.P = obj.sanitize_matrix(Sigma_post);
+        end
     end
     
-    %% 流形数值防护计算辅助函数 (私有)
+    %% 数值安全防护辅助函数 (私有)
     methods (Access = private)
-        %% SVD 归一化旋转矩阵 (防退化NaN)
         function R_orth = robust_orthonormalize(~, R)
             if any(isnan(R(:))) || any(isinf(R(:)))
                 R_orth = eye(3); return;
@@ -299,26 +224,6 @@ classdef DIEKF_V1
             end
         end
         
-        %% 李群 SO(3) 安全对数映射
-        function phi = so3_log_safe(obj, R)
-            tr = trace(R);
-            val = (tr - 1) / 2;
-            val = max(-1, min(1, val));
-            theta = acos(val);
-            R_diff = R - R';
-            if theta < 1e-6
-                phi = obj.unskew(R_diff) / 2;
-            else
-                phi = (theta / (2 * sin(theta))) * obj.unskew(R_diff);
-            end
-        end
-        
-        %% 李群 SO(3) 反对称提取
-        function phi = unskew(~, phi_skew)
-            phi = [phi_skew(3, 2); phi_skew(1, 3); phi_skew(2, 1)];
-        end
-        
-        %% 李群 SO(3) 安全指数映射
         function R = so3_exp_safe(obj, phi)
             theta = norm(phi);
             phi_skew = obj.skew_matrix(phi);
@@ -329,7 +234,6 @@ classdef DIEKF_V1
             end
         end
         
-        %% 李群 SO(3) 安全右雅可比
         function Jr = so3_right_jacobian_safe(obj, phi)
             theta = norm(phi);
             phi_skew = obj.skew_matrix(phi);
@@ -340,7 +244,22 @@ classdef DIEKF_V1
             end
         end
         
-        %% 矩阵净化与强制对称
+        function x = safe_solve(~, A, b, reg)
+            A_reg = A + reg * eye(size(A));
+            x = A_reg \ b;
+            if any(isnan(x)) || any(isinf(x))
+                x = pinv(A) * b;
+            end
+        end
+        
+        function A_inv = safe_inv(~, A)
+            A_reg = A + 1e-11 * eye(size(A));
+            A_inv = inv(A_reg);
+            if any(isnan(A_inv(:))) || any(isinf(A_inv(:)))
+                A_inv = pinv(A);
+            end
+        end
+        
         function M_out = sanitize_matrix(~, M_in)
             M_out = M_in;
             M_out(isnan(M_out)) = 0;
@@ -348,14 +267,12 @@ classdef DIEKF_V1
             M_out = 0.5 * (M_out + M_out');
         end
         
-        %% 向量净化
         function v_out = sanitize_vector(~, v_in)
             v_out = v_in;
             v_out(isnan(v_out)) = 0;
             v_out(isinf(v_out)) = 0;
         end
         
-        %% 3D 向量反对称矩阵构造
         function skew_R = skew_matrix(~, v)
             skew_R = [0, -v(3), v(2); v(3), 0, -v(1); -v(2), v(1), 0];
         end

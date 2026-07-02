@@ -34,7 +34,7 @@ classdef DMLKF_V1
             obj.tau = tau;
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5; % 防止GN迭代中Hessian退化
-            obj.omega_self = 0.7;
+            obj.omega_self = 0.8;
         end
         
         %% 【接口兼容】重置对偶变量哑接口 (V1无对偶变量，直接返回)
@@ -303,10 +303,10 @@ classdef DMLKF_V1
             % lambda_t_anc = Lambda_t_anc * s_pos;
             % lambda_t_int = Lambda_t_int * s_pos;
                     
-            int_scale = 1.4;  % 可调参数,编号1
+            int_scale = 1.6;  % 防止调参时NaN的保护系数
             lambda_t_anc = Lambda_t_anc * s_pos;
             lambda_t_int = int_scale * Lambda_t_int * s_pos;
-            Lambda_t_int = int_scale * Lambda_t_int;  % Λ也同步缩放保持一致
+            Lambda_t_int = int_scale * Lambda_t_int;  
 
             % --- 4. 映射到 15 维全局空间并更新信息状态 ---
             Lambda_anc_full = zeros(15, 15); Lambda_anc_full(1:3, 1:3) = Lambda_t_anc;
