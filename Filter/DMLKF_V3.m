@@ -32,7 +32,8 @@ classdef DMLKF_V3
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5;
 
-            obj.omega_self = 0.93;
+            % obj.omega_self = 0.93;
+            obj.omega_self = 0.85;
         end
         
         %% 【接口兼容哑方法】

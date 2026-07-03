@@ -34,7 +34,8 @@ classdef DEKF
             obj.mu = 1e-6; % 数值阻尼
             
             % 经典 DEKF-CI 基准参数配置 
-            obj.omega_self = 0.93;
+            % obj.omega_self = 0.93;
+            obj.omega_self = 0.85;
         end
         
         %% 对偶变量重置兼容接口 (经典 DEKF 无对偶变量，此接口仅作调用兼容)

@@ -303,7 +303,8 @@ classdef DMLKF_V1
             % lambda_t_anc = Lambda_t_anc * s_pos;
             % lambda_t_int = Lambda_t_int * s_pos;
                     
-            int_scale = 1.8;  % 防止调参时NaN的保护系数
+            % int_scale = 1.8;  % 防止调参时NaN的保护系数
+            int_scale = 2;
             lambda_t_anc = Lambda_t_anc * s_pos;
             lambda_t_int = int_scale * Lambda_t_int * s_pos;
             Lambda_t_int = int_scale * Lambda_t_int;  

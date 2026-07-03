@@ -12,8 +12,8 @@ addpath(genpath('../Data'));
 
 Veh_list = 4 : 12;
 uwb_downsample_factor = 10;
-% imu_update_factors = [1, 2, 5, 10]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz 等
-imu_update_factors = [5];
+imu_update_factors = [1, 2, 5, 10]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz 等
+
 N_veh_tests = length(Veh_list);
 
 save_dir = 'E:\SE3_MLKF\Result';
