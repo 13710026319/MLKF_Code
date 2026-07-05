@@ -17,7 +17,7 @@ classdef DMLKF_V3
     
     methods
         %% 构造函数 (签名与各版本严格一致)
-        function obj = DMLKF_V3(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau)
+        function obj = DMLKF_V3(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, omega_self)
             obj.id = id;
             obj.state = init_state;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
@@ -32,8 +32,11 @@ classdef DMLKF_V3
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5;
 
-            % obj.omega_self = 0.93;
-            obj.omega_self = 0.85;
+            if nargin >= 8 && ~isempty(omega_self) && isnumeric(omega_self) && isscalar(omega_self)
+                obj.omega_self = omega_self;
+            else
+                obj.omega_self = 0.88; % 默认值
+            end
         end
         
         %% 【接口兼容哑方法】
@@ -84,6 +87,7 @@ classdef DMLKF_V3
             w_prior = obj.state.omega;
             
             max_iter = 5;
+            
             for iter = 1:max_iter
                 da = s_IMU(1:3); dphi = s_IMU(4:6); domega = s_IMU(7:9);
                 a_iter = a_prior + da;
@@ -104,12 +108,11 @@ classdef DMLKF_V3
                 grad = H' * R_IMU_inv * r;
                 
                 step = obj.safe_solve(Hessian, grad, obj.mu);
-                max_step = 0.1;
+                max_step = 0.2;
                 n_step = norm(step);
                 if n_step > max_step
                     step = step * (max_step / n_step);
                 end
-                s_IMU = s_IMU - step;
                 
                 if norm(step) < 1e-4, break; end
                 if any(isnan(s_IMU)) || any(isinf(s_IMU))
@@ -281,6 +284,7 @@ classdef DMLKF_V3
             K = length(anchor_ranges);
             s_pos = zeros(3, 1);
             p_prior = obj.state.p;
+            alpha_gn = 0.8;
             for iter = 1:5
                 p_est = p_prior + s_pos;
                 r = zeros(K, 1); H = zeros(K, 3);
@@ -293,6 +297,7 @@ classdef DMLKF_V3
                 Hessian = (1/sigma_s^2) * (H' * H);
                 grad = (1/sigma_s^2) * (H' * r);
                 step = obj.safe_solve(Hessian, grad, obj.mu);
+                s_pos = s_pos - alpha_gn * step;
                 s_pos = s_pos - step;
             end
             Lambda_anc = (1/sigma_s^2) * (H' * H);

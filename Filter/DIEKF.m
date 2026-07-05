@@ -17,7 +17,7 @@ classdef DIEKF
     
     methods
         %% 构造函数 (签名与各版本严格一致)
-        function obj = DIEKF(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, ~)
+        function obj = DIEKF(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau,omega_self)
             obj.id = id;
             obj.state = init_state;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
@@ -33,8 +33,11 @@ classdef DIEKF
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-6; 
 
-            % obj.omega_self = 0.93;
-            obj.omega_self = 0.85;
+            if nargin >= 8 && ~isempty(omega_self) && isnumeric(omega_self) && isscalar(omega_self)
+                obj.omega_self = omega_self;
+            else
+                obj.omega_self = 0.88; % 默认值
+            end
         end
         
         %% 接口兼容哑方法
@@ -255,11 +258,11 @@ classdef DIEKF
                 
                 K_gain = P_scaled * H_prior' / S_reg;
                 % 引入阻尼因子，平抑由于 CI 膨胀带来的迭代震荡
-                alpha = 0.8;
+                alpha = 0.5;
                 delta_theta_0_new = (1.0 - alpha) * delta_theta_0 + alpha * (K_gain * r_MAP);
                 
                 % 15维等比例步长阶段，维持复合空间物理一致性
-                max_pos_step = 0.15;
+                max_pos_step = 0.2;
                 norm_pos = norm(delta_theta_0_new(1:3));
                 if norm_pos > max_pos_step
                     delta_theta_0_new = delta_theta_0_new * (max_pos_step / norm_pos);

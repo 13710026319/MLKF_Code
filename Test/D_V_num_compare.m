@@ -12,11 +12,11 @@ addpath(genpath('../Data'));
 
 Veh_list = 4 : 12;
 uwb_downsample_factor = 10;
-imu_update_factors = [1, 2, 5, 10]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz 等
+imu_update_factors = [1,2,5,10]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz 等
 
 N_veh_tests = length(Veh_list);
 
-save_dir = 'E:\SE3_MLKF\Result';
+save_dir = 'E:\SE3_MLKF\Result\diff_IMURate';
 
 %% 2. 核心评测循环
 
@@ -48,7 +48,7 @@ if ~jump_to_plot
         fprintf('\n>>> 当前评测数据集车辆数量: %d <<<\n', veh_num);
 
         % 加载数据集
-        data_file = sprintf('E:\\SE3_MLKF\\Data\\diff_V_6Anc\\Trj_data_Veh%d_Anc6_3D.mat', veh_num);
+        data_file = sprintf('E:\\SE3_MLKF\\Data\\diff_V_6Anc_1\\Trj_data_Veh%d_Anc6_3D.mat', veh_num);
         if ~exist(data_file, 'file')
             error('未检测到指定数据集：%s', data_file);
         end
@@ -175,6 +175,7 @@ if ~jump_to_plot
                     filters_v1{n} = filters_v1{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
                     filters_dmlkf{n} = filters_dmlkf{n}.update_imu(imu_acc(n, :)', imu_gyro(n, :)', zeros(3, 1), zeros(3, 1));
                 end
+
             end
 
             % UWB 更新 (10Hz)
@@ -676,6 +677,21 @@ for i = 1 : N_veh_tests
         sprintf('%.4f (%+.2f%%)', dm, p_dm));
 end
 fprintf('====================================================================================\n');
+
+mean_d  = mean(rmse_all_dekf);
+mean_di = mean(rmse_all_diekf); p_mean_di = (mean_d - mean_di) / mean_d * 100;
+mean_v3 = mean(rmse_all_v3);    p_mean_v3 = (mean_d - mean_v3) / mean_d * 100;
+mean_v2 = mean(rmse_all_v2);    p_mean_v2 = (mean_d - mean_v2) / mean_d * 100;
+mean_v1 = mean(rmse_all_v1);    p_mean_v1 = (mean_d - mean_v1) / mean_d * 100;
+mean_dm = mean(rmse_all_dmlkf); p_mean_dm = (mean_d - mean_dm) / mean_d * 100;
+
+% 2. 严格按原有列格式打印输出 Average 均值行
+fprintf('%-8s | %-12.4f | %-20s | %-20s | %-20s | %-20s | %-20s\n', 'Average', mean_d, ...
+    sprintf('%.4f (%+.2f%%)', mean_di, p_mean_di), ...
+    sprintf('%.4f (%+.2f%%)', mean_v3, p_mean_v3), ...
+    sprintf('%.4f (%+.2f%%)', mean_v2, p_mean_v2), ...
+    sprintf('%.4f (%+.2f%%)', mean_v1, p_mean_v1), ...
+    sprintf('%.4f (%+.2f%%)', mean_dm, p_mean_dm));
 
 %% 4. 双子图可视化
 if exist('rmse_all_dekf', 'var')

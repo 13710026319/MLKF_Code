@@ -17,7 +17,7 @@ classdef DEKF
     
     methods
         %% 构造函数
-        function obj = DEKF(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, ~)
+        function obj = DEKF(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, omega_self)
             obj.id = id;
             obj.state = init_state;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
@@ -34,8 +34,11 @@ classdef DEKF
             obj.mu = 1e-6; % 数值阻尼
             
             % 经典 DEKF-CI 基准参数配置 
-            % obj.omega_self = 0.93;
-            obj.omega_self = 0.85;
+            if nargin >= 8 && ~isempty(omega_self) && isnumeric(omega_self) && isscalar(omega_self)
+                obj.omega_self = omega_self;
+            else
+                obj.omega_self = 0.88; % 默认值
+            end
         end
         
         %% 对偶变量重置兼容接口 (经典 DEKF 无对偶变量，此接口仅作调用兼容)

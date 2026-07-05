@@ -22,7 +22,7 @@ classdef DMLKF
     
     methods
         %% 构造函数
-        function obj = DMLKF(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau)
+        function obj = DMLKF(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, omega_self)
             obj.id = id;
             obj.state = init_state;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
@@ -38,7 +38,11 @@ classdef DMLKF
             obj.tau = tau;
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5; % 防止GN迭代中Hessian退化
-            obj.omega_self = 0.6;
+            if nargin >= 8 && ~isempty(omega_self) && isnumeric(omega_self) && isscalar(omega_self)
+                obj.omega_self = omega_self;
+            else
+                obj.omega_self = 0.6; % 默认值
+            end
             
             obj.lambda_local = containers.Map('KeyType', 'double', 'ValueType', 'any');
             obj.lambda_remote = containers.Map('KeyType', 'double', 'ValueType', 'any');

@@ -18,7 +18,7 @@ classdef DMLKF_V1
     
     methods
         %% 构造函数 (签名与原DMLKF严格一致)
-        function obj = DMLKF_V1(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau)
+        function obj = DMLKF_V1(id, init_state, init_cov, Q_matrix, Sigma_a, Sigma_w, tau, omega_self)
             obj.id = id;
             obj.state = init_state;
             obj.state.R = obj.robust_orthonormalize(init_state.R);
@@ -34,7 +34,11 @@ classdef DMLKF_V1
             obj.tau = tau;
             obj.g_vec = [0; 0; -9.81];
             obj.mu = 1e-5; % 防止GN迭代中Hessian退化
-            obj.omega_self = 0.8;
+            if nargin >= 8 && ~isempty(omega_self) && isnumeric(omega_self) && isscalar(omega_self)
+                obj.omega_self = omega_self;
+            else
+                obj.omega_self = 0.8; % 默认值
+            end
         end
         
         %% 【接口兼容】重置对偶变量哑接口 (V1无对偶变量，直接返回)

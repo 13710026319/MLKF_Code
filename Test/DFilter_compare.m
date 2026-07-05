@@ -11,7 +11,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh10_Anc6_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc_1\Trj_data_Veh9_Anc6_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat';
     if ~exist(data_file, 'file')
@@ -30,11 +30,11 @@ CI_rho = 1.5;     % DMLKF_V2, 发现V2的要比V1的数值大
 %% 算法运行开关 (Algorithm selection flags)
 run_dmlkf = 1; % 原始 DMLKF (SCI+ADMM)
 run_dmlkf_v1 = 1; % 基准 DMLKF_V1 (SCI+No Joint)
-run_dmlkf_v2 = 1; % 基准 DMLKF_V2 (CI+ADMM)
-run_dmlkf_v3 = 1; % 新增基准 DMLKF_V3 (CI+No Joint)
+run_dmlkf_v2 = 0; % 基准 DMLKF_V2 (CI+ADMM)
+run_dmlkf_v3 = 0; % 新增基准 DMLKF_V3 (CI+No Joint)
 
-run_dekf = 1; % 经典 DEKF + CI 融合
-run_diekf = 1; % DIEKF_V1 + 全维 CI 融合
+run_dekf = 0; % 经典 DEKF + CI 融合
+run_diekf = 0; % DIEKF_V1 + 全维 CI 融合
 
 %% 2. 状态真值重建与偏置已知设定
 for n = 1 : Vehicle_num
@@ -825,50 +825,50 @@ else
 end
 
 %% 6. 绘制多车欧氏定位误差对比曲线
-if ~isempty(vars)
-    time_arr = trajectories.V1.IMU_Time;
-    n_rows = ceil(sqrt(Vehicle_num));
-    n_cols = ceil(Vehicle_num / n_rows);
-    figure('Name', 'Euclidean Position Errors Comparison', 'Position', [100, 100, 1200, 800]);
-    for n = 1 : Vehicle_num
-        subplot(n_rows, n_cols, n);
-        hold on; grid on;
-
-        legend_entries = {};
-
-        % 动态绘制曲线与添加图例
-        if run_dmlkf
-            plot(time_arr, errors_dmlkf(n).euc_err, 'k-', 'LineWidth', 1.5);
-            legend_entries{end + 1} = 'DMLKF (SCI+ADMM)';
-        end
-        if run_dmlkf_v1
-            plot(time_arr, errors_dmlkf_v1(n).euc_err, 'r--', 'LineWidth', 1.2);
-            legend_entries{end + 1} = 'DMLKF\_V1 (No Joint)';
-        end
-        if run_dmlkf_v2
-            plot(time_arr, errors_dmlkf_v2(n).euc_err, 'b-.', 'LineWidth', 1.2);
-            legend_entries{end + 1} = 'DMLKF\_V2 (CI+ADMM)';
-        end
-
-        if run_dmlkf_v3
-            plot(time_arr, errors_dmlkf_v3(n).euc_err, 'g:', 'LineWidth', 1.2);
-            legend_entries{end + 1} = 'DMLKF\_V3 (CI+No Joint)';
-        end
-
-        if run_dekf
-            plot(time_arr, errors_dekf(n).euc_err, 'm-.', 'LineWidth', 1.2); % 采用品红色点划线
-            legend_entries{end + 1} = 'DEKF (Classic CI)';
-        end
-        if run_diekf
-            plot(time_arr, errors_diekf(n).euc_err, 'c--', 'LineWidth', 1.2); % 品青色虚线
-            legend_entries{end + 1} = 'DIEKF (Iterated CI)';
-        end
-
-        title(sprintf('Vehicle %d Euclidean Error', n));
-        xlabel('Time (s)'); ylabel('Error (m)');
-        legend(legend_entries, 'Location', 'northeast');
-        xlim([0, time_arr(end)]);
-        ylim([0, 1.5]);
-        hold off;
-    end
-end
+% if ~isempty(vars)
+%     time_arr = trajectories.V1.IMU_Time;
+%     n_rows = ceil(sqrt(Vehicle_num));
+%     n_cols = ceil(Vehicle_num / n_rows);
+%     figure('Name', 'Euclidean Position Errors Comparison', 'Position', [100, 100, 1200, 800]);
+%     for n = 1 : Vehicle_num
+%         subplot(n_rows, n_cols, n);
+%         hold on; grid on;
+% 
+%         legend_entries = {};
+% 
+%         % 动态绘制曲线与添加图例
+%         if run_dmlkf
+%             plot(time_arr, errors_dmlkf(n).euc_err, 'k-', 'LineWidth', 1.5);
+%             legend_entries{end + 1} = 'DMLKF (SCI+ADMM)';
+%         end
+%         if run_dmlkf_v1
+%             plot(time_arr, errors_dmlkf_v1(n).euc_err, 'r--', 'LineWidth', 1.2);
+%             legend_entries{end + 1} = 'DMLKF\_V1 (No Joint)';
+%         end
+%         if run_dmlkf_v2
+%             plot(time_arr, errors_dmlkf_v2(n).euc_err, 'b-.', 'LineWidth', 1.2);
+%             legend_entries{end + 1} = 'DMLKF\_V2 (CI+ADMM)';
+%         end
+% 
+%         if run_dmlkf_v3
+%             plot(time_arr, errors_dmlkf_v3(n).euc_err, 'g:', 'LineWidth', 1.2);
+%             legend_entries{end + 1} = 'DMLKF\_V3 (CI+No Joint)';
+%         end
+% 
+%         if run_dekf
+%             plot(time_arr, errors_dekf(n).euc_err, 'm-.', 'LineWidth', 1.2); % 采用品红色点划线
+%             legend_entries{end + 1} = 'DEKF (Classic CI)';
+%         end
+%         if run_diekf
+%             plot(time_arr, errors_diekf(n).euc_err, 'c--', 'LineWidth', 1.2); % 品青色虚线
+%             legend_entries{end + 1} = 'DIEKF (Iterated CI)';
+%         end
+% 
+%         title(sprintf('Vehicle %d Euclidean Error', n));
+%         xlabel('Time (s)'); ylabel('Error (m)');
+%         legend(legend_entries, 'Location', 'northeast');
+%         xlim([0, time_arr(end)]);
+%         ylim([0, 1.5]);
+%         hold off;
+%     end
+% end
