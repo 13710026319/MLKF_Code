@@ -11,7 +11,7 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc_1\Trj_data_Veh9_Anc6_3D.mat';
+data_file = 'E:\SE3_MLKF\Data\diff_V_6Anc\Trj_data_Veh9_Anc6_3D.mat';
 if ~exist(data_file, 'file')
     data_file = '../Data/Trj_data_Veh4_Anc5_3D.mat';
     if ~exist(data_file, 'file')
@@ -111,11 +111,11 @@ for n = 1 : Vehicle_num
 
     % 分别根据开关创建对象与预分配定位结果空间
     if run_dmlkf
-        filters{n} = DMLKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+        filters{n} = DMLKF(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, 0.9);
         pos_est_dmlkf{n} = zeros(N_steps, 3);
     end
     if run_dmlkf_v1
-        filters_v1{n} = DMLKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+        filters_v1{n} = DMLKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu,0.9);
         pos_est_dmlkf_v1{n} = zeros(N_steps, 3);
     end
     if run_dmlkf_v2
