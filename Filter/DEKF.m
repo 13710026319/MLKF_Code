@@ -82,7 +82,7 @@ classdef DEKF
             obj.P = obj.sanitize_matrix(P_pred);
         end
         
-        %% 2.2 高频 15D 局部 IMU 更新 (IMU Update - 100Hz)
+        %% 2.2 高频局部 IMU 更新 (15维)
         function obj = update_imu(obj, raw_acc, raw_gyro, bias_a, bias_w)
             % 预修正测量值
             acc_tilde = raw_acc - bias_a;
@@ -132,7 +132,7 @@ classdef DEKF
             Sigma_pos = obj.P(1:3, 1:3);
         end
         
-        %% 3.4 堆叠式分布式 UWB 更新与经典 CI 融合 (UWB Update - 10Hz)
+        %% 3.4 堆叠式分布式 UWB 更新与经典 CI 融合 (15维)
         function obj = apply_uwb_update(obj, ~, anchor_ranges, anchor_positions, ...
                                         neighbor_ids, neighbor_positions, ...
                                         neighbor_Sigma_pos, relative_ranges, sigma_s, sigma_z)

@@ -89,7 +89,7 @@ classdef DIEKF
             obj.P = obj.sanitize_matrix(P_pred);
         end
         
-        %% 2.2 局部高频 MAP 迭代 IMU 更新 (IMU Update - 100Hz)
+        %% 2.2 局部高频 MAP 迭代 IMU 更新 (15维)
         function obj = update_imu(obj, raw_acc, raw_gyro, bias_a, bias_w)
             acc_tilde = raw_acc - bias_a;
             gyro_tilde = raw_gyro - bias_w;
@@ -174,7 +174,7 @@ classdef DIEKF
             obj.P = obj.sanitize_matrix(obj.P);
         end
         
-        %% 3.4 堆叠协同 UWB MAP 迭代更新与全维 CI 融合 (UWB Update - 10Hz)
+        %% 3.4 堆叠协同 UWB MAP 迭代更新与全维 CI 融合 (15维)
         function obj = apply_uwb_update(obj, ~, anchor_ranges, anchor_positions, ...
                                         neighbor_ids, neighbor_positions, ...
                                         neighbor_Sigma_pos, relative_ranges, sigma_s, sigma_z)
