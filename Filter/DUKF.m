@@ -79,7 +79,7 @@ classdef DUKF
             
             % 5. 迭代重投影法解算流形本征均值 (Intrinsic Riemannian Mean)
             x_bar = X_prop{1}; % 初始猜测
-            max_iter_mean = 10;
+            max_iter_mean = 5;
             for iter_mean = 1:max_iter_mean
                 Delta_x = zeros(15, 1);
                 for i = 1:31
@@ -149,7 +149,7 @@ classdef DUKF
             % 5. 安全求解无迹卡尔曼增益
             K_gain = obj.safe_solve(P_zz', P_xz')';
             
-            % 6. 后验状态更新回射与协方差更新
+            % 6. 引入 alpha=0.55 阻尼因子，平抑由于状态积分偏差导致的迭代起伏
             z_meas = [acc_tilde; gyro_tilde];
             delta_theta = K_gain * (z_meas - z_hat);
             
@@ -278,7 +278,9 @@ classdef DUKF
             
             % --- Step 7: 解算并执行无迹卡尔曼更新 ---
             K_gain = obj.safe_solve(P_zz_stack', P_xz_stack')';
-            delta_theta = K_gain * (z_stack - z_stack_pred);
+            % 引入 alpha_uwb=0.5 阻尼因子，平抑由于 CI 协方差膨胀造成的更新超调
+            alpha_uwb = 0.5;
+            delta_theta = alpha_uwb * (K_gain * (z_stack - z_stack_pred));
             
             % 15维等比例步长阶段，防范由于协方差全维膨胀引起的超调发散
             max_pos_step = 0.15;
