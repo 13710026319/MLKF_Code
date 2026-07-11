@@ -8,7 +8,9 @@ clc; clear; close all;
 
 %% 1. 用户指定单次生成的无人机和基站规模（可在此直接修改）
 Vehicle_num = 6;                       % 指定单次生成的车辆/无人机规模 (范围: 4 - 12)
-Anchor_num  = 5;                       % 指定单次生成的基站数目 (范围: 4 - 20)
+
+
+Anchor_num  = 11;                       % 指定单次生成的基站数目 (范围: 4 - 20)
 
 % 参数合法性检验
 if Vehicle_num < 4 || Vehicle_num > 12
@@ -27,8 +29,8 @@ if mod(dt_uwb, dt_imu) ~= 0
     error('UWB 采样周期必须是 IMU 采样周期的整数倍！');
 end
 
-t_end = 40;                                 % 严格限定运行总时间为 40s
-N_steps = round(t_end / dt_imu) + 1;        % 共计 4001 步
+t_end = 60;                                 % 严格限定运行总时间为 60s
+N_steps = round(t_end / dt_imu) + 1;        % 共计 6001 步
 
 % 物理保存根目录
 save_dir = 'E:\SE3_MLKF\Data\Low';
@@ -89,7 +91,7 @@ fprintf('>>> [正在生成数据集] UAV规模: %2d 架 | 基站数量: %2d 个.
 
 % --- Step 4.1: 解析级 3D 轨迹真值生成 ---
 trajectories = struct();
-v_mag = 0.2; % 设定无人机巡航水平速度
+v_mag = 0.1; % 设定无人机巡航水平速度
 
 for n = 1 : Vehicle_num
     cfg = all_veh_configs(n, :);
@@ -299,7 +301,7 @@ h_traj = zeros(1, Vehicle_num);
 for n = 1 : Vehicle_num
     v_data = trajectories.(sprintf('V%d', n));
     h_traj(n) = plot3(v_data.X_true, v_data.Y_true, v_data.Z_true, 'Color', colors(n,:), 'LineWidth', 2.5, ...
-        'DisplayName', sprintf('无人机 V%d (40s立体轨迹)', n));
+        'DisplayName', sprintf('无人机 V%d (60s立体轨迹)', n));
     % 标出起点和终点
     plot3(v_data.X_true(1), v_data.Y_true(1), v_data.Z_true(1), 'o', 'MarkerSize', 8, 'MarkerFaceColor', colors(n,:), 'Color', colors(n,:));
     plot3(v_data.X_true(end), v_data.Y_true(end), v_data.Z_true(end), '*', 'MarkerSize', 10, 'Color', colors(n,:));
