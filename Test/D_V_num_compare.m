@@ -12,9 +12,9 @@ addpath(genpath('../Data'));
 
 Veh_list = 4 : 12;
 uwb_downsample_factor = 10;
-imu_update_factors = [1]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz 等
-CI_Weight = [0.92, 0.9, 0.89, 0.88]; % 频率越高,CI算法的权重逐步提升,10HZ下为默认0.88
-SCI_Weight = [0.9, 0.8, 0.7, 0.6]; % 10HZ下为0.6
+imu_update_factors = [1,2,5,10]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz 等
+CI_Weight = [0.9, 0.9, 0.9, 0.9]; % 频率越高,CI算法的权重逐步提升,10HZ下为默认0.88
+SCI_Weight = [0.92, 0.9, 0.9, 0.9]; % 10HZ下为0.6
 
 N_veh_tests = length(Veh_list);
 
