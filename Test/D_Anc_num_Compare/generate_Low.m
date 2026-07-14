@@ -9,7 +9,7 @@ function generate_Low(target_anc)
 % 【修改点】：使用 nargin 兼容 F5 手动直接运行本脚本
 if nargin < 1
     clc; clear; close all;
-    Anchor_num = 11; % 手动直接运行本脚本时的默认基站数
+    Anchor_num = 19; % 手动直接运行本脚本时的默认基站数
 else
     % 如果是被主自动化控制脚本调用，则使用传入的基站数 [2]
     clc; close all;
@@ -40,6 +40,8 @@ N_steps = round(t_end / dt_imu) + 1; % 共计 6001 步
 
 % 物理保存根目录
 save_dir = 'E:\SE3_MLKF\Data\Low';
+trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D.mat', Vehicle_num, Anchor_num);
+save_path = fullfile(save_dir, trajectories_mat_name);
 
 % 传感器高精噪声参数
 IMU_noise_params.sigma_na = 0.03;
@@ -277,8 +279,7 @@ end
 if ~exist(save_dir, 'dir')
     mkdir(save_dir);
 end
-trajectories_mat_name = sprintf('Trj_data_Veh%d_Anc%d_3D.mat', Vehicle_num, Anchor_num);
-save_path = fullfile(save_dir, trajectories_mat_name);
+
 save(save_path, 'trajectories', 'anchors', 'IMU_noise_params', 'UWB_noise_params', 'Vehicle_num', 'Anchor_num');
 fprintf('  >> [生成成功] 无人机数据集已导出: %s\n', save_path);
 

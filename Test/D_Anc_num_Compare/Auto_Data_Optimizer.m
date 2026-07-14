@@ -6,8 +6,8 @@ addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
 %% 2. 自动化配置参数
-Anc_list = 17 : 20;         % 目标评估的基站数区间
-target_improvement = 47.0;  % 期望的 DMLKF 相比 DEKF 精度提升门限 (50%)
+Anc_list = 15 : 20;         % 目标评估的基站数区间
+target_improvement = 49.0;  % 期望的 DMLKF 相比 DEKF 精度提升门限 (50%)
 
 fprintf('=========================================================================\n');
 fprintf('               启动分布式协同定位数据集自动化闭环迭代优化控制            \n');

@@ -18,7 +18,7 @@ save_file = fullfile(save_dir, 'D_Anc_num_6V.mat');
 
 dt_imu = 0.01; % 100Hz 采样步长
 max_admm_iter = 2;
-SCI_rho = 0.8;
+SCI_rho = 3.2; % 6基站下为0.8，随基站增加应该稍有提升，但幅度还未定
 CI_rho = 1.5;
 
 % --- 2. 区分手动与自动运行模式的参数绑定 ---
@@ -29,7 +29,7 @@ if nargin < 1
     addpath(genpath('../Filter'));
     addpath(genpath('../Data'));
 
-    target_anc = 14; % 手动运行时的默认基站数
+    target_anc = 15; % 目前优化完成14
     Veh_num = 6;
 end
 
@@ -57,9 +57,9 @@ if ~skip_sim
         fprintf('#########################################################################\n');
 
         % 动态构造文件路径
-        data_file = sprintf('E:\\SE3_MLKF\\Data\\diff_V_6Anc\\Trj_data_Veh%d_Anc6_3D.mat', Veh_num);
+        % data_file = sprintf('E:\\SE3_MLKF\\Data\\diff_V_6Anc\\Trj_data_Veh%d_Anc6_3D.mat', Veh_num);
 
-        % data_file = sprintf('E:\\SE3_MLKF\\Data\\Low\\Trj_data_Veh6_Anc%d_3D.mat', anc_num);
+        data_file = sprintf('E:\\SE3_MLKF\\Data\\Low\\Trj_data_Veh6_Anc%d_3D.mat', anc_num);
         if ~exist(data_file, 'file')
             continue;
         end
