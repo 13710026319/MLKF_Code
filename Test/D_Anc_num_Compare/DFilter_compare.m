@@ -6,12 +6,12 @@ function improvement_vs_dekf = DFilter_compare(target_anc)
 
 % --- 1. 算法运行开关与环境参数 ---
 run_dmlkf = 0;       % 原始 DMLKF (SCI+ADMM)
-run_dmlkf_v1 = 1;    % 基准 DMLKF_V1 (SCI+No Joint)
-run_dmlkf_v2 = 1;    % 基准 DMLKF_V2 (CI+ADMM)
-run_dmlkf_v3 = 1;    % 新增基准 DMLKF_V3 (CI+No Joint)
+run_dmlkf_v1 = 0;    % 基准 DMLKF_V1 (SCI+No Joint)
+run_dmlkf_v2 = 0;    % 基准 DMLKF_V2 (CI+ADMM)
+run_dmlkf_v3 = 0;    % 新增基准 DMLKF_V3 (CI+No Joint)
 run_dekf = 1;        % 经典 DEKF + CI 融合
-run_diekf = 0;       % DIEKF_V1 + 全维 CI 融合
-run_dukf = 0;        % 流形 DUKF
+run_diekf = 1;       % DIEKF_V1 + 全维 CI 融合
+run_dukf = 1;        % 流形 DUKF
 
 save_dir = 'E:\SE3_MLKF\Result';
 save_file = fullfile(save_dir, 'D_Anc_num_6V.mat');

@@ -9,7 +9,7 @@ function generate_Low(target_anc)
 % 【修改点】：使用 nargin 兼容 F5 手动直接运行本脚本
 if nargin < 1
     clc; clear; close all;
-    Anchor_num = 19; % 手动直接运行本脚本时的默认基站数
+    Anchor_num = 4; % 手动直接运行本脚本时的默认基站数
 else
     % 如果是被主自动化控制脚本调用，则使用传入的基站数 [2]
     clc; close all;
