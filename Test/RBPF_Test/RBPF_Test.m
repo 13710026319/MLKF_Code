@@ -655,23 +655,23 @@ function print_and_plot_results(unified_data, Anc_list, veh_num, save_dir_fig)
     legend('Location', 'northeast');
     set(gca, 'XTick', Anc_list);
     
-    % --- 自适应文件名保存逻辑 ---
-    if ~exist(save_dir_fig, 'dir')
-        mkdir(save_dir_fig);
-    end
-    if length(Anc_list) > 1
-        fig_name = sprintf('RBPF_Compare_Anc_%d_%d', Anc_list(1), Anc_list(end));
-    else
-        fig_name = sprintf('RBPF_Compare_Anc_%d', Anc_list(1));
-    end
-    
-    % 显式指定 'png' 作为格式参数，规避底层 feval 中无法识别 'saveaspng' 的 dispatch 错误
-    try
-        % R2020a 及以上版本推荐的高质量导出接口（紧凑裁剪边缘）
-        exportgraphics(gcf, fullfile(save_dir_fig, [fig_name, '.png']), 'Resolution', 300);
-    catch
-        % 兼容老版本的经典 print 底层输出接口（300 DPI 高清分辨率）
-        print(gcf, fullfile(save_dir_fig, [fig_name, '.png']), '-dpng', '-r300');
-    end
-    fprintf('一图两子图分析图像已成功保存至：%s\n', fullfile(save_dir_fig, [fig_name, '.png']));
+    % --- 图片文件保存逻辑 ---
+    % if ~exist(save_dir_fig, 'dir')
+    %     mkdir(save_dir_fig);
+    % end
+    % if length(Anc_list) > 1
+    %     fig_name = sprintf('RBPF_Compare_Anc_%d_%d', Anc_list(1), Anc_list(end));
+    % else
+    %     fig_name = sprintf('RBPF_Compare_Anc_%d', Anc_list(1));
+    % end
+    % 
+    % % 显式指定 'png' 作为格式参数，规避底层 feval 中无法识别 'saveaspng' 的 dispatch 错误
+    % try
+    %     % R2020a 及以上版本推荐的高质量导出接口（紧凑裁剪边缘）
+    %     exportgraphics(gcf, fullfile(save_dir_fig, [fig_name, '.png']), 'Resolution', 300);
+    % catch
+    %     % 兼容老版本的经典 print 底层输出接口（300 DPI 高清分辨率）
+    %     print(gcf, fullfile(save_dir_fig, [fig_name, '.png']), '-dpng', '-r300');
+    % end
+    % fprintf('一图两子图分析图像已成功保存至：%s\n', fullfile(save_dir_fig, [fig_name, '.png']));
 end
