@@ -1,10 +1,6 @@
 % =========================================================================
 % RBPF_Test.m (DMLKF、DEKF与RBPF多车协同定位对比评测脚本)
-% 测评维度：
-%   1. 车辆规模与基站数多级交叉遍历 (Veh_list, Anc_list)
-%   2. 高频IMU退化博弈：100Hz -> 50Hz -> 20Hz -> 10Hz (仅对卡尔曼类算法降频)
-%   3. 分频自适应权重同步退化：0.9 -> 0.8 -> 0.7 -> 0.6
-% 特色机制：增量式全局缓存检索 + 自适应数据集命名 + 自动图表绘制与保存
+
 % =========================================================================
 clc; clear; close all;
 
@@ -18,7 +14,7 @@ save_dir_fig = 'E:\SE3_MLKF\Result\Figure'; % 统一图片保存目录
 
 %% 2. 评测自维参数组配置
 Veh_list = 6;     % 评测的车辆规模列表
-Anc_list = 4:20;  % 评测的基站数量列表（支持 5:20, 9:11, 或单基站例如 9）
+Anc_list = 4:8;  % 评测的基站数量列表（支持 5:20, 9:11, 或单基站例如 9）
 
 max_admm_iter = 2;
 SCI_rho = 0.8;
@@ -35,7 +31,7 @@ run_rbpf = 1;     % 运行 RBPF 算法
 
 run_compare = 0;  % 强制运行算法仿真开关 (1-覆盖全部缓存重新运行, 0-读取缓存进行增量计算)
 
-RBPF_num = 3;     % RBPF 重复运行次数（用于取均值减小随机性误差）
+RBPF_num = 1;     % RBPF 重复运行次数（用于取均值减小随机性误差）
 Particle_num = 200; % RBPF 的粒子参数（传给 RBPF 构造函数）
 
 % DMLKF/DEKF 15维过程噪声设置 (同全局配置一致)
@@ -109,7 +105,7 @@ for v_idx = 1 : length(Veh_list)
             anc_num = missing_anc_list(a_idx);
             
             % 加载对应基站仿真源文件
-            data_file = sprintf('E:\\SE3_MLKF\\Data\\Low\\Trj_data_Veh%d_Anc%d_3D.mat', veh_num, anc_num);
+            data_file = sprintf('E:\\SE3_MLKF\\Data\\High\\Trj_data_Veh%d_Anc%d_3D.mat', veh_num, anc_num);
             if ~exist(data_file, 'file')
                 data_file = sprintf('../Data/Trj_data_Veh%d_Anc%d_3D.mat', veh_num, anc_num);
                 if ~exist(data_file, 'file')
@@ -208,7 +204,7 @@ for v_idx = 1 : length(Veh_list)
                         end
                         if run_dekf
                             % DEKF 的 CI 参数固定传入 0.9
-                            filters_dekf{n} = DEKF(n, init_state, init_cov, Q_15d, Sigma_a_dmlkf, Sigma_w_dmlkf, dt_imu, 0.9);
+                            filters_dekf{n} = DEKF(n, init_state, init_cov, Q_15d, Sigma_a_dmlkf, Sigma_w_dmlkf, dt_imu, 0.88);
                             pos_est_dekf{n} = zeros(N_steps, 3);
                         end
                     end
@@ -600,24 +596,20 @@ function print_and_plot_results(unified_data, Anc_list, veh_num, save_dir_fig)
     
     for i = 1 : N_anc
         anc_num = Anc_list(i);
-        RowNames{i} = sprintf('Anc_%d', anc_num);
+        RowNames{i} = sprintf('Anc_%d', anc_num); % 已修正此处
         
-        % 提取平均 RMSE（计算全部因子的均值）
         rmse_dekf_vec(i) = mean(unified_data.avg_rmse_dekf{anc_num});
         rmse_dmlkf_vec(i) = mean(unified_data.avg_rmse_dmlkf{anc_num});
         rmse_rbpf_vec(i) = mean(unified_data.avg_rmse_rbpf{anc_num});
         
-        % 计算提升比例
         imp_dmlkf_vec(i) = (rmse_dekf_vec(i) - rmse_dmlkf_vec(i)) / rmse_dekf_vec(i) * 100;
         imp_rbpf_vec(i)  = (rmse_dekf_vec(i) - rmse_rbpf_vec(i)) / rmse_dekf_vec(i) * 100;
         
-        % 格式化表格显示项
         DEKF_Col(i) = rmse_dekf_vec(i);
         DMLKF_Col{i} = sprintf('%.4f (%.2f%%)', rmse_dmlkf_vec(i), imp_dmlkf_vec(i));
         RBPF_Col{i}  = sprintf('%.4f (%.2f%%)', rmse_rbpf_vec(i), imp_rbpf_vec(i));
     end
     
-    % 组装表格
     Summary_Table = table(DEKF_Col, DMLKF_Col, RBPF_Col, ...
         'RowNames', RowNames, ...
         'VariableNames', {'DEKF_RMSE', 'DMLKF_RMSE_Imp', 'RBPF_RMSE_Imp'});
@@ -626,7 +618,6 @@ function print_and_plot_results(unified_data, Anc_list, veh_num, save_dir_fig)
     disp(Summary_Table);
     fprintf('-------------------------------------------------------------------------\n');
     
-    % --- 绘制一图两子图 ---
     figure('Name', sprintf('Veh%d Multi-Anchor Comparison', veh_num), ...
            'Color', 'w', 'Position', [150, 150, 1050, 450]);
     
@@ -641,7 +632,10 @@ function print_and_plot_results(unified_data, Anc_list, veh_num, save_dir_fig)
     ylabel('Average RMSE (m)', 'FontSize', 10);
     title(sprintf('RMSE (Vehicle: %d)', veh_num), 'FontSize', 11);
     legend('Location', 'northeast');
+    
+    % 显式锁定边界与刻度，防止导出时生成空白边缘
     set(gca, 'XTick', Anc_list);
+    xlim([Anc_list(1), Anc_list(end)]); 
     
     % 子图 2：提升百分比趋势显示
     subplot(1, 2, 2);
@@ -653,7 +647,10 @@ function print_and_plot_results(unified_data, Anc_list, veh_num, save_dir_fig)
     ylabel('Improvement (%)', 'FontSize', 10);
     title('Relative to the improvement in accuracy of DEKF', 'FontSize', 11);
     legend('Location', 'northeast');
+    
+    % 显式锁定边界与刻度，防止导出时生成空白边缘
     set(gca, 'XTick', Anc_list);
+    xlim([Anc_list(1), Anc_list(end)]); 
     
     % --- 图片文件保存逻辑 ---
     if ~exist(save_dir_fig, 'dir')
