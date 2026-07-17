@@ -14,7 +14,7 @@ save_dir_fig = 'E:\SE3_MLKF\Result\Figure'; % 统一图片保存目录
 
 %% 2. 评测自维参数组配置
 Veh_list = 6;     % 评测的车辆规模列表
-Anc_list = 4:8;  % 评测的基站数量列表（支持 5:20, 9:11, 或单基站例如 9）
+Anc_list = 4:35;  % 评测的基站数量列表（支持 5:20, 9:11, 或单基站例如 9）
 
 max_admm_iter = 2;
 SCI_rho = 0.8;
@@ -70,7 +70,7 @@ for v_idx = 1 : length(Veh_list)
     % 判断当前 Anc_list 是否为列表（若仅为单个基站，则不保存文件，也不作图）
     is_list = length(Anc_list) > 1;
     if is_list
-        save_file = fullfile(save_dir, sprintf('RBPF_Compare_Veh%d_Anc%d_to_%d.mat', veh_num, Anc_list(1), Anc_list(end)));
+        save_file = fullfile(save_dir, sprintf('RBPF_High_Veh%d_Anc%d_to_%d.mat', veh_num, Anc_list(1), Anc_list(end)));
         if exist(save_file, 'file')
             unified_data = load(save_file);
         end
@@ -620,8 +620,7 @@ function print_and_plot_results(unified_data, Anc_list, veh_num, save_dir_fig)
     
     figure('Name', sprintf('Veh%d Multi-Anchor Comparison', veh_num), ...
            'Color', 'w', 'Position', [150, 150, 1050, 450]);
-    
-    % 子图 1：RMSE 数值变化趋势
+    % ==================== 子图 1：RMSE 数值变化趋势 ====================
     subplot(1, 2, 1);
     plot(Anc_list, rmse_dekf_vec, 'o-', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'DEKF (Baseline)');
     hold on;
@@ -633,11 +632,11 @@ function print_and_plot_results(unified_data, Anc_list, veh_num, save_dir_fig)
     title(sprintf('RMSE (Vehicle: %d)', veh_num), 'FontSize', 11);
     legend('Location', 'northeast');
     
-    % 显式锁定边界与刻度，防止导出时生成空白边缘
-    set(gca, 'XTick', Anc_list);
+    set(gca, 'XTick', Anc_list(1) : 2 : Anc_list(end)); % 每隔2个显示一次，防止水平重叠
     xlim([Anc_list(1), Anc_list(end)]); 
+    xtickangle(0);                                      % 强制标签旋转角度为 0（正向水平）
     
-    % 子图 2：提升百分比趋势显示
+    % ==================== 子图 2：提升百分比趋势显示 ====================
     subplot(1, 2, 2);
     plot(Anc_list, imp_dmlkf_vec, 's--', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'DMLKF vs DEKF');
     hold on;
@@ -647,19 +646,19 @@ function print_and_plot_results(unified_data, Anc_list, veh_num, save_dir_fig)
     ylabel('Improvement (%)', 'FontSize', 10);
     title('Relative to the improvement in accuracy of DEKF', 'FontSize', 11);
     legend('Location', 'northeast');
-    
-    % 显式锁定边界与刻度，防止导出时生成空白边缘
-    set(gca, 'XTick', Anc_list);
+
+    set(gca, 'XTick', Anc_list(1) : 2 : Anc_list(end)); % 每隔2个显示一次，防止水平重叠
     xlim([Anc_list(1), Anc_list(end)]); 
-    
+    xtickangle(0);                                   
+ 
     % --- 图片文件保存逻辑 ---
     if ~exist(save_dir_fig, 'dir')
         mkdir(save_dir_fig);
     end
     if length(Anc_list) > 1
-        fig_name = sprintf('RBPF_Compare_Anc_%d_%d', Anc_list(1), Anc_list(end));
+        fig_name = sprintf('RBPF_High_Anc_%d_%d', Anc_list(1), Anc_list(end));
     else
-        fig_name = sprintf('RBPF_Compare_Anc_%d', Anc_list(1));
+        fig_name = sprintf('RBPF_High_Anc_%d', Anc_list(1));
     end
 
     % 显式指定 'png' 作为格式参数，规避底层 feval 中无法识别 'saveaspng' 的 dispatch 错误
