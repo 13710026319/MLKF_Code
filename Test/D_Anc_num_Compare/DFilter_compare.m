@@ -5,21 +5,21 @@
 function improvement_vs_dekf = DFilter_compare(target_anc)
 
 % --- 1. 算法运行开关与环境参数 ---
-run_dmlkf = 0;       % 原始 DMLKF (SCI+ADMM)
+run_dmlkf = 1;       % 原始 DMLKF (SCI+ADMM)
 run_dmlkf_v1 = 0;    % 基准 DMLKF_V1 (SCI+No Joint)
 run_dmlkf_v2 = 0;    % 基准 DMLKF_V2 (CI+ADMM)
 run_dmlkf_v3 = 0;    % 新增基准 DMLKF_V3 (CI+No Joint)
 run_dekf = 1;        % 经典 DEKF + CI 融合
-run_diekf = 1;       % DIEKF_V1 + 全维 CI 融合
-run_dukf = 1;        % 流形 DUKF
+run_diekf = 0;       % DIEKF_V1 + 全维 CI 融合
+run_dukf = 0;        % 流形 DUKF
 
 save_dir = 'E:\SE3_MLKF\Result';
 save_file = fullfile(save_dir, 'D_Anc_num_6V.mat');
 
 dt_imu = 0.01;              % 100Hz 采样步长
-max_admm_iter = 2;
+max_admm_iter = 6;
 imu_update_factor = 10;     % 已简化为固定标量，避免频段循环
-SCI_rho = 3.2;              % 6基站下为0.8，随基站增加应该稍有提升
+SCI_rho = 0.8;              % 6基站下为0.8，随基站增加应该稍有提升
 CI_rho = 1.5;
 
 % --- 2. 区分手动与自动运行模式的参数绑定 ---
@@ -30,7 +30,7 @@ if nargin < 1
     addpath(genpath('../Filter'));
     addpath(genpath('../Data'));
 
-    target_anc = 5:20; 
+    target_anc = 9; 
     Veh_num = 6;
 end
 
@@ -57,7 +57,7 @@ if ~skip_sim
         fprintf('  [启动仿真组] 当前评估基站数: %2d 个基站 | 数据集加载中...\n', anc_num);
         fprintf('#########################################################################\n');
 
-        data_file = sprintf('E:\\SE3_MLKF\\Data\\Low\\Trj_data_Veh6_Anc%d_3D.mat', anc_num);
+        data_file = sprintf('E:\\SE3_MLKF\\Data\\High\\Trj_data_Veh6_Anc%d_3D.mat', anc_num);
         if ~exist(data_file, 'file')
             continue;
         end

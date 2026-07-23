@@ -9,15 +9,17 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-save_dir = 'E:\SE3_MLKF\Result\RBPF';       % 统一数据保存目录
+save_dir = 'E:\SE3_MLKF\Result\RBPF'; % 统一数据保存目录
 save_dir_fig = 'E:\SE3_MLKF\Result\Figure'; % 统一图片保存目录
 
 %% 2. 评测自维参数组配置
-Veh_list = 6;     % 评测的车辆规模列表
-Anc_list = 4:35;  % 评测的基站数量列表（支持 5:20, 9:11, 或单基站例如 9）
+Veh_list = 6; % 评测的车辆规模列表
+Anc_list = 4; % 评测的基站数量列表（支持 5:20, 9:11, 或单基站例如 9）
 
-max_admm_iter = 2;
-SCI_rho = 0.8;
+max_admm_iter = 2; % 提高迭代上限，交由收敛判据决定何时提前停止
+SCI_rho = 0.6;        % 默认0.8, 在各基站数下都较为稳定
+admm_conv_tol = 1e-2; % ADMM 原始残差收敛阈值（单位：米），可按场景调整
+admm_min_iter = 2; % 至少运行的迭代次数，避免因偶然小残差过早退出
 
 imu_update_factors = [10]; % IMU更新退化因子 (仅影响DMLKF与DEKF)
 SCI_Weight = [0.9]; % 分频公用先验权重系数
@@ -25,13 +27,13 @@ dt_imu = 0.01; % 100Hz 物理基础采样步长
 uwb_downsample_factor = 10; % 10Hz UWB协同更新
 
 % 算法运行控制开关 (1-开启, 0-关闭)
-run_dmlkf = 1;    % 运行 DMLKF 算法 (ADMM 分裂协方差版)
-run_dekf = 1;     % 运行 DEKF 算法 (全维 CI EKF 基准对照)
-run_rbpf = 1;     % 运行 RBPF 算法
+run_dmlkf = 1; % 运行 DMLKF 算法 (ADMM 分裂协方差版)
+run_dekf = 1; % 运行 DEKF 算法 (全维 CI EKF 基准对照)
+run_rbpf = 0; % 运行 RBPF 算法
 
-run_compare = 0;  % 强制运行算法仿真开关 (1-覆盖全部缓存重新运行, 0-读取缓存进行增量计算)
+run_compare = 0; % 强制运行算法仿真开关 (1-覆盖全部缓存重新运行, 0-读取缓存进行增量计算)
 
-RBPF_num = 1;     % RBPF 重复运行次数（用于取均值减小随机性误差）
+RBPF_num = 1; % RBPF 重复运行次数（用于取均值减小随机性误差）
 Particle_num = 200; % RBPF 的粒子参数（传给 RBPF 构造函数）
 
 % DMLKF/DEKF 15维过程噪声设置 (同全局配置一致)
@@ -45,12 +47,12 @@ Q_sigmas_15d = [ ...
 Q_15d = diag(Q_sigmas_15d .^ 2);
 
 init_cov = diag([ ...
-                0.01 * ones(1, 3), ... % 位置
-                0.01 * ones(1, 3), ... % 速度
-                0.005 * ones(1, 3), ... % 加速度
-                (1 * pi / 180) * ones(1, 3), ... % 姿态
-                0.005 * ones(1, 3)  ... % 角速度
-                ]);
+    0.01 * ones(1, 3), ... % 位置
+    0.01 * ones(1, 3), ... % 速度
+    0.005 * ones(1, 3), ... % 加速度
+    (1 * pi / 180) * ones(1, 3), ... % 姿态
+    0.005 * ones(1, 3)  ... % 角速度
+    ]);
 
 data_ratio = 1; % 仿真使用的数据比例
 
@@ -78,14 +80,14 @@ for v_idx = 1 : length(Veh_list)
 
     % 自动识别在当前请求的 Anc_list 中，有哪些基站数据缺失
     missing_anc_list = [];
-    
+
     if ~is_list
         % 若输入基站为单个，直接标记为仿真运行项，不检查、不读取
         missing_anc_list = Anc_list;
     else
         for a_idx = 1 : length(Anc_list)
             anc_num = Anc_list(a_idx);
-            
+
             % 检查当前加载的数据集中是否已经存在该基站的数据
             if run_compare == 0 && anc_num <= length(unified_data.avg_rmse_dekf) && ~isempty(unified_data.avg_rmse_dekf{anc_num})
                 continue; % 数据已存在，跳过
@@ -103,9 +105,9 @@ for v_idx = 1 : length(Veh_list)
 
         for a_idx = 1 : length(missing_anc_list)
             anc_num = missing_anc_list(a_idx);
-            
+
             % 加载对应基站仿真源文件
-            data_file = sprintf('E:\\SE3_MLKF\\Data\\High\\Trj_data_Veh%d_Anc%d_3D.mat', veh_num, anc_num);
+            data_file = sprintf('E:\\SE3_MLKF\\Data\\Low\\Trj_data_Veh%d_Anc%d_3D.mat', veh_num, anc_num);
             if ~exist(data_file, 'file')
                 data_file = sprintf('../Data/Trj_data_Veh%d_Anc%d_3D.mat', veh_num, anc_num);
                 if ~exist(data_file, 'file')
@@ -121,7 +123,7 @@ for v_idx = 1 : length(Veh_list)
             results_dmlkf_all = zeros(length(imu_update_factors), veh_num);
             results_dekf_all = zeros(length(imu_update_factors), veh_num);
             results_rbpf_all = zeros(length(imu_update_factors), veh_num);
-            
+
             avg_rmse_dmlkf = zeros(length(imu_update_factors), 1);
             avg_rmse_dekf = zeros(length(imu_update_factors), 1);
             avg_rmse_rbpf = zeros(length(imu_update_factors), 1);
@@ -140,12 +142,12 @@ for v_idx = 1 : length(Veh_list)
                 for n = 1 : Vehicle_num
                     v_name = sprintf('V%d', n);
                     veh = trajectories.(v_name);
-                    N_steps = floor(length(veh.Time_true) * data_ratio); 
+                    N_steps = floor(length(veh.Time_true) * data_ratio);
 
                     % 加速度重建
-                    v_true_matrix = [veh.Vx_true(1:N_steps), ...
-                                     veh.Vy_true(1:N_steps), ...
-                                     veh.Vz_true(1:N_steps)];
+                    v_true_matrix = [veh.Vx_true(1 : N_steps), ...
+                        veh.Vy_true(1 : N_steps), ...
+                        veh.Vz_true(1 : N_steps)];
                     a_true_matrix = zeros(N_steps, 3);
                     a_true_matrix(:, 1) = gradient(v_true_matrix(:, 1), dt_imu);
                     a_true_matrix(:, 2) = gradient(v_true_matrix(:, 2), dt_imu);
@@ -153,15 +155,15 @@ for v_idx = 1 : length(Veh_list)
                     trajectories.(v_name).a_true = a_true_matrix;
 
                     % 角速度重建
-                    theta_unwrapped = unwrap(veh.Theta_true(1:N_steps));
+                    theta_unwrapped = unwrap(veh.Theta_true(1 : N_steps));
                     wz_true = gradient(theta_unwrapped, dt_imu);
                     omega_true_matrix = [zeros(N_steps, 2), wz_true];
                     trajectories.(v_name).omega_true = omega_true_matrix;
 
                     % 提取真实位置用于精度结算
-                    pos_true{n} = [trajectories.(v_name).X_true(1:N_steps), ...
-                                   trajectories.(v_name).Y_true(1:N_steps), ...
-                                   trajectories.(v_name).Z_true(1:N_steps)];
+                    pos_true{n} = [trajectories.(v_name).X_true(1 : N_steps), ...
+                        trajectories.(v_name).Y_true(1 : N_steps), ...
+                        trajectories.(v_name).Z_true(1 : N_steps)];
                 end
 
                 % 双邻居动态拓扑
@@ -302,7 +304,18 @@ for v_idx = 1 : length(Veh_list)
                                             SCI_rho, active_neighbors, ...
                                             dp_neigh_neigh_all{n}, dp_neigh_self_all{n});
                                     end
+
+                                    % ==================== [新增] 计算本轮原始残差 (primal residual) ====================
+                                    primal_res = 0;
+                                    for n = 1 : Vehicle_num
+                                        diff_vec = s_admm_new{n} - s_admm_all{n};
+                                        % 用 RMS 形式做归一化，避免维度（邻居数不同）导致残差量纲不一致
+                                        primal_res = max(primal_res, norm(diff_vec) / sqrt(numel(diff_vec)));
+                                    end
+                                    % =====================================================================================
+
                                     s_admm_all = s_admm_new;
+
                                     for n = 1 : Vehicle_num
                                         active_neighbors = neighbors_map{n};
                                         M_neighbors = length(active_neighbors);
@@ -322,6 +335,11 @@ for v_idx = 1 : length(Veh_list)
                                         filters_dmlkf{n} = filters_dmlkf{n}.update_dual(s_admm_all{n}, ...
                                             active_neighbors, dp_neigh_neigh_all{n}, dp_neigh_self_all{n}, SCI_rho);
                                     end
+                                    % ==================== [新增] 提前停止判断 ====================
+                                    if admm_k >= admm_min_iter && primal_res < admm_conv_tol
+                                        break; % 已收敛，提前退出，避免继续迭代引入的振荡/漂移
+                                    end
+                                    % ===============================================================
                                 end
                                 for n = 1 : Vehicle_num
                                     v_name = sprintf('V%d', n); veh = trajectories.(v_name);
@@ -389,7 +407,7 @@ for v_idx = 1 : length(Veh_list)
                                     sigma_z = UWB_noise_params.sigma_rel;
 
                                     filters_dekf{n} = filters_dekf{n}.apply_uwb_update(...
-                                        [], ... 
+                                        [], ...
                                         anchor_ranges_raw, anchor_positions_veh, ...
                                         active_neighbors, neigh_positions_dekf, ...
                                         neigh_Sigma_pos_dekf, relative_ranges, sigma_s, sigma_z);
@@ -405,7 +423,7 @@ for v_idx = 1 : length(Veh_list)
                                 pos_est_dekf{n}(k, :) = filters_dekf{n}.state.p';
                             end
                         end
-                    end 
+                    end
 
                     if run_dmlkf
                         [~, rmse_dmlkf] = calculate_position_errors(pos_est_dmlkf, pos_true);
@@ -425,7 +443,7 @@ for v_idx = 1 : length(Veh_list)
 
                     for r_idx = 1 : RBPF_num
                         fprintf('        -> [RBPF 进度] 正在运行第 %d/%d 次独立随机仿真...\n', r_idx, RBPF_num);
-                        
+
                         filters_rbpf = cell(Vehicle_num, 1);
                         pos_est_rbpf = cell(Vehicle_num, 1);
 
@@ -509,12 +527,12 @@ for v_idx = 1 : length(Veh_list)
                                         active_neighbors, neigh_positions, ...
                                         neigh_Sigma_pos, relative_ranges, sigma_z, 1.3);
                                 end
-                            end   
+                            end
 
                             for n = 1 : Vehicle_num
                                 pos_est_rbpf{n}(k, :) = filters_rbpf{n}.state.p';
                             end
-                        end 
+                        end
 
                         [~, rmse_rbpf_run] = calculate_position_errors(pos_est_rbpf, pos_true);
                         accum_rmse_rbpf = accum_rmse_rbpf + [rmse_rbpf_run.euc_rmse];
@@ -529,11 +547,11 @@ for v_idx = 1 : length(Veh_list)
 
             % --- 将计算出的基站数据更新到内存的 unified_data 中 ---
             unified_data.results_dmlkf_all{anc_num} = results_dmlkf_all;
-            unified_data.results_dekf_all{anc_num}  = results_dekf_all;
-            unified_data.results_rbpf_all{anc_num}  = results_rbpf_all;
-            unified_data.avg_rmse_dmlkf{anc_num}    = avg_rmse_dmlkf;
-            unified_data.avg_rmse_dekf{anc_num}     = avg_rmse_dekf;
-            unified_data.avg_rmse_rbpf{anc_num}     = avg_rmse_rbpf;
+            unified_data.results_dekf_all{anc_num} = results_dekf_all;
+            unified_data.results_rbpf_all{anc_num} = results_rbpf_all;
+            unified_data.avg_rmse_dmlkf{anc_num} = avg_rmse_dmlkf;
+            unified_data.avg_rmse_dekf{anc_num} = avg_rmse_dekf;
+            unified_data.avg_rmse_rbpf{anc_num} = avg_rmse_rbpf;
 
             % --- 多基站列表保存逻辑：仅在 Anc_list 为列表且核心算法均开启时存盘 ---
             if is_list && run_dekf && run_dmlkf && run_rbpf
@@ -561,10 +579,10 @@ for v_idx = 1 : length(Veh_list)
         dekf_avg = mean(unified_data.avg_rmse_dekf{anc_num});
         dmlkf_avg = mean(unified_data.avg_rmse_dmlkf{anc_num});
         rbpf_avg = mean(unified_data.avg_rmse_rbpf{anc_num});
-        
+
         dmlkf_imp = (dekf_avg - dmlkf_avg) / dekf_avg * 100;
         rbpf_imp = (dekf_avg - rbpf_avg) / dekf_avg * 100;
-        
+
         fprintf('\n======================== 单基站评估结果 ========================\n');
         fprintf('基站数: %d\n', anc_num);
         fprintf('DEKF  (基准): %.4f m\n', dekf_avg);
@@ -573,101 +591,101 @@ for v_idx = 1 : length(Veh_list)
         fprintf('===============================================================\n');
     end
 
-end 
+end
 
 %% =========================================================================
 %  内部局部辅助函数区域 (必须置于脚本文件的最下方)
 % =========================================================================
 
 function print_and_plot_results(unified_data, Anc_list, veh_num, save_dir_fig)
-    N_anc = length(Anc_list);
-    RowNames = cell(N_anc, 1);
-    
-    DEKF_Col = zeros(N_anc, 1);
-    DMLKF_Col = cell(N_anc, 1);
-    RBPF_Col = cell(N_anc, 1);
-    
-    rmse_dekf_vec = zeros(N_anc, 1);
-    rmse_dmlkf_vec = zeros(N_anc, 1);
-    rmse_rbpf_vec = zeros(N_anc, 1);
-    
-    imp_dmlkf_vec = zeros(N_anc, 1);
-    imp_rbpf_vec = zeros(N_anc, 1);
-    
-    for i = 1 : N_anc
-        anc_num = Anc_list(i);
-        RowNames{i} = sprintf('Anc_%d', anc_num); % 已修正此处
-        
-        rmse_dekf_vec(i) = mean(unified_data.avg_rmse_dekf{anc_num});
-        rmse_dmlkf_vec(i) = mean(unified_data.avg_rmse_dmlkf{anc_num});
-        rmse_rbpf_vec(i) = mean(unified_data.avg_rmse_rbpf{anc_num});
-        
-        imp_dmlkf_vec(i) = (rmse_dekf_vec(i) - rmse_dmlkf_vec(i)) / rmse_dekf_vec(i) * 100;
-        imp_rbpf_vec(i)  = (rmse_dekf_vec(i) - rmse_rbpf_vec(i)) / rmse_dekf_vec(i) * 100;
-        
-        DEKF_Col(i) = rmse_dekf_vec(i);
-        DMLKF_Col{i} = sprintf('%.4f (%.2f%%)', rmse_dmlkf_vec(i), imp_dmlkf_vec(i));
-        RBPF_Col{i}  = sprintf('%.4f (%.2f%%)', rmse_rbpf_vec(i), imp_rbpf_vec(i));
-    end
-    
-    Summary_Table = table(DEKF_Col, DMLKF_Col, RBPF_Col, ...
-        'RowNames', RowNames, ...
-        'VariableNames', {'DEKF_RMSE', 'DMLKF_RMSE_Imp', 'RBPF_RMSE_Imp'});
-        
-    fprintf('\n======================== 全局平均定位精度与提升对比表 ========================\n');
-    disp(Summary_Table);
-    fprintf('-------------------------------------------------------------------------\n');
-    
-    figure('Name', sprintf('Veh%d Multi-Anchor Comparison', veh_num), ...
-           'Color', 'w', 'Position', [150, 150, 1050, 450]);
-    % ==================== 子图 1：RMSE 数值变化趋势 ====================
-    subplot(1, 2, 1);
-    plot(Anc_list, rmse_dekf_vec, 'o-', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'DEKF (Baseline)');
-    hold on;
-    plot(Anc_list, rmse_dmlkf_vec, 's-', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'DMLKF');
-    plot(Anc_list, rmse_rbpf_vec, '^-', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'RBPF');
-    grid on;
-    xlabel('Anchors number', 'FontSize', 10);
-    ylabel('Average RMSE (m)', 'FontSize', 10);
-    title(sprintf('RMSE (Vehicle: %d)', veh_num), 'FontSize', 11);
-    legend('Location', 'northeast');
-    
-    set(gca, 'XTick', Anc_list(1) : 2 : Anc_list(end)); % 每隔2个显示一次，防止水平重叠
-    xlim([Anc_list(1), Anc_list(end)]); 
-    xtickangle(0);                                      % 强制标签旋转角度为 0（正向水平）
-    
-    % ==================== 子图 2：提升百分比趋势显示 ====================
-    subplot(1, 2, 2);
-    plot(Anc_list, imp_dmlkf_vec, 's--', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'DMLKF vs DEKF');
-    hold on;
-    plot(Anc_list, imp_rbpf_vec, '^--', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'RBPF vs DEKF');
-    grid on;
-    xlabel('Anchors number', 'FontSize', 10);
-    ylabel('Improvement (%)', 'FontSize', 10);
-    title('Relative to the improvement in accuracy of DEKF', 'FontSize', 11);
-    legend('Location', 'northeast');
+N_anc = length(Anc_list);
+RowNames = cell(N_anc, 1);
 
-    set(gca, 'XTick', Anc_list(1) : 2 : Anc_list(end)); % 每隔2个显示一次，防止水平重叠
-    xlim([Anc_list(1), Anc_list(end)]); 
-    xtickangle(0);                                   
- 
-    % --- 图片文件保存逻辑 ---
-    if ~exist(save_dir_fig, 'dir')
-        mkdir(save_dir_fig);
-    end
-    if length(Anc_list) > 1
-        fig_name = sprintf('RBPF_High_Anc_%d_%d', Anc_list(1), Anc_list(end));
-    else
-        fig_name = sprintf('RBPF_High_Anc_%d', Anc_list(1));
-    end
+DEKF_Col = zeros(N_anc, 1);
+DMLKF_Col = cell(N_anc, 1);
+RBPF_Col = cell(N_anc, 1);
 
-    % 显式指定 'png' 作为格式参数，规避底层 feval 中无法识别 'saveaspng' 的 dispatch 错误
-    try
-        % R2020a 及以上版本推荐的高质量导出接口（紧凑裁剪边缘）
-        exportgraphics(gcf, fullfile(save_dir_fig, [fig_name, '.png']), 'Resolution', 300);
-    catch
-        % 兼容老版本的经典 print 底层输出接口（300 DPI 高清分辨率）
-        print(gcf, fullfile(save_dir_fig, [fig_name, '.png']), '-dpng', '-r300');
-    end
-    fprintf('一图两子图分析图像已成功保存至：%s\n', fullfile(save_dir_fig, [fig_name, '.png']));
+rmse_dekf_vec = zeros(N_anc, 1);
+rmse_dmlkf_vec = zeros(N_anc, 1);
+rmse_rbpf_vec = zeros(N_anc, 1);
+
+imp_dmlkf_vec = zeros(N_anc, 1);
+imp_rbpf_vec = zeros(N_anc, 1);
+
+for i = 1 : N_anc
+    anc_num = Anc_list(i);
+    RowNames{i} = sprintf('Anc_%d', anc_num); % 已修正此处
+
+    rmse_dekf_vec(i) = mean(unified_data.avg_rmse_dekf{anc_num});
+    rmse_dmlkf_vec(i) = mean(unified_data.avg_rmse_dmlkf{anc_num});
+    rmse_rbpf_vec(i) = mean(unified_data.avg_rmse_rbpf{anc_num});
+
+    imp_dmlkf_vec(i) = (rmse_dekf_vec(i) - rmse_dmlkf_vec(i)) / rmse_dekf_vec(i) * 100;
+    imp_rbpf_vec(i) = (rmse_dekf_vec(i) - rmse_rbpf_vec(i)) / rmse_dekf_vec(i) * 100;
+
+    DEKF_Col(i) = rmse_dekf_vec(i);
+    DMLKF_Col{i} = sprintf('%.4f (%.2f%%)', rmse_dmlkf_vec(i), imp_dmlkf_vec(i));
+    RBPF_Col{i} = sprintf('%.4f (%.2f%%)', rmse_rbpf_vec(i), imp_rbpf_vec(i));
+end
+
+Summary_Table = table(DEKF_Col, DMLKF_Col, RBPF_Col, ...
+    'RowNames', RowNames, ...
+    'VariableNames', {'DEKF_RMSE', 'DMLKF_RMSE_Imp', 'RBPF_RMSE_Imp'});
+
+fprintf('\n======================== 全局平均定位精度与提升对比表 ========================\n');
+disp(Summary_Table);
+fprintf('-------------------------------------------------------------------------\n');
+
+figure('Name', sprintf('Veh%d Multi-Anchor Comparison', veh_num), ...
+    'Color', 'w', 'Position', [150, 150, 1050, 450]);
+% ==================== 子图 1：RMSE 数值变化趋势 ====================
+subplot(1, 2, 1);
+plot(Anc_list, rmse_dekf_vec, 'o-', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'DEKF (Baseline)');
+hold on;
+plot(Anc_list, rmse_dmlkf_vec, 's-', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'DMLKF');
+plot(Anc_list, rmse_rbpf_vec, '^-', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'RBPF');
+grid on;
+xlabel('Anchors number', 'FontSize', 10);
+ylabel('Average RMSE (m)', 'FontSize', 10);
+title(sprintf('RMSE (Vehicle: %d)', veh_num), 'FontSize', 11);
+legend('Location', 'northeast');
+
+set(gca, 'XTick', Anc_list(1) : 2 : Anc_list(end)); % 每隔2个显示一次，防止水平重叠
+xlim([Anc_list(1), Anc_list(end)]);
+xtickangle(0); % 强制标签旋转角度为 0（正向水平）
+
+% ==================== 子图 2：提升百分比趋势显示 ====================
+subplot(1, 2, 2);
+plot(Anc_list, imp_dmlkf_vec, 's--', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'DMLKF vs DEKF');
+hold on;
+plot(Anc_list, imp_rbpf_vec, '^--', 'LineWidth', 1.5, 'MarkerSize', 6, 'DisplayName', 'RBPF vs DEKF');
+grid on;
+xlabel('Anchors number', 'FontSize', 10);
+ylabel('Improvement (%)', 'FontSize', 10);
+title('Relative to the improvement in accuracy of DEKF', 'FontSize', 11);
+legend('Location', 'northeast');
+
+set(gca, 'XTick', Anc_list(1) : 2 : Anc_list(end)); % 每隔2个显示一次，防止水平重叠
+xlim([Anc_list(1), Anc_list(end)]);
+xtickangle(0);
+
+% --- 图片文件保存逻辑 ---
+if ~exist(save_dir_fig, 'dir')
+    mkdir(save_dir_fig);
+end
+if length(Anc_list) > 1
+    fig_name = sprintf('RBPF_High_Anc_%d_%d', Anc_list(1), Anc_list(end));
+else
+    fig_name = sprintf('RBPF_High_Anc_%d', Anc_list(1));
+end
+
+% 显式指定 'png' 作为格式参数，规避底层 feval 中无法识别 'saveaspng' 的 dispatch 错误
+try
+    % R2020a 及以上版本推荐的高质量导出接口（紧凑裁剪边缘）
+    exportgraphics(gcf, fullfile(save_dir_fig, [fig_name, '.png']), 'Resolution', 300);
+catch
+    % 兼容老版本的经典 print 底层输出接口（300 DPI 高清分辨率）
+    print(gcf, fullfile(save_dir_fig, [fig_name, '.png']), '-dpng', '-r300');
+end
+fprintf('一图两子图分析图像已成功保存至：%s\n', fullfile(save_dir_fig, [fig_name, '.png']));
 end
