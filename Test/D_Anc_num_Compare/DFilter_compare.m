@@ -6,9 +6,9 @@ function improvement_vs_dekf = DFilter_compare(target_anc)
 
 % --- 1. 算法运行开关与环境参数 ---
 run_dmlkf = 1;       % 原始 DMLKF (SCI+ADMM)
-run_dmlkf_v1 = 0;    % 基准 DMLKF_V1 (SCI+No Joint)
-run_dmlkf_v2 = 0;    % 基准 DMLKF_V2 (CI+ADMM)
-run_dmlkf_v3 = 0;    % 新增基准 DMLKF_V3 (CI+No Joint)
+run_dmlkf_v1 = 1;    % 基准 DMLKF_V1 (SCI+No Joint)
+run_dmlkf_v2 = 1;    % 基准 DMLKF_V2 (CI+ADMM)
+run_dmlkf_v3 = 1;    % 新增基准 DMLKF_V3 (CI+No Joint)
 run_dekf = 0;        % 经典 DEKF + CI 融合
 run_diekf = 0;       % DIEKF_V1 + 全维 CI 融合
 run_dukf = 0;        % 流形 DUKF
@@ -20,7 +20,7 @@ dt_imu = 0.01;              % 100Hz 采样步长
 max_admm_iter = 2;
 imu_update_factor = 1;     % 已简化为固定标量，避免频段循环
 SCI_rho = 0.8;              % 6基站下为0.8，随基站增加应该稍有提升
-CI_rho = 1.5;
+CI_rho = 2;              % 影响V2表现
 
 % --- 2. 区分手动与自动运行模式的参数绑定 ---
 if nargin < 1
@@ -57,7 +57,7 @@ if ~skip_sim
         fprintf('  [启动仿真组] 当前评估基站数: %2d 个基站 | 数据集加载中...\n', anc_num);
         fprintf('#########################################################################\n');
 
-        data_file = sprintf('E:\\SE3_MLKF\\Data\\High\\Trj_data_Veh6_Anc%d_3D.mat', anc_num);
+        data_file = sprintf('E:\\SE3_MLKF\\Data\\diff_V_6Anc\\Trj_data_Veh%d_Anc6_3D.mat', Veh_num);
         if ~exist(data_file, 'file')
             continue;
         end
@@ -142,11 +142,11 @@ if ~skip_sim
                 pos_est_dmlkf{n} = zeros(N_steps, 3);
             end
             if run_dmlkf_v1
-                filters_v1{n} = DMLKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+                filters_v1{n} = DMLKF_V1(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, 0.9);
                 pos_est_dmlkf_v1{n} = zeros(N_steps, 3);
             end
             if run_dmlkf_v2
-                filters_v2{n} = DMLKF_V2(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu);
+                filters_v2{n} = DMLKF_V2(n, init_state, init_cov, Q_15d, Sigma_a, Sigma_w, dt_imu, 0.9);
                 pos_est_dmlkf_v2{n} = zeros(N_steps, 3);
             end
             if run_dmlkf_v3

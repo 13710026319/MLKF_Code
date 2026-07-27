@@ -155,8 +155,9 @@ classdef DMLKF_V1
             H_final(1:3, 4:6) = -obj.skew_matrix(R_converged' * (a_converged - obj.g_vec)) * Jr_phi;
             H_final(4:6, 7:9) = -eye(3);
             
-            Lambda_IMU = H_final' * R_IMU_inv * H_final;
-            lambda_IMU = Lambda_IMU * s_IMU;
+            int_scale = 2;
+            Lambda_IMU = int_scale * H_final' * R_IMU_inv * H_final;
+            lambda_IMU = int_scale * Lambda_IMU * s_IMU;
             
             Lambda_full = zeros(15, 15); lambda_full = zeros(15, 1);
             idx_15 = 7:15;
