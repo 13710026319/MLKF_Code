@@ -9,7 +9,7 @@ run_dmlkf = 1;       % 原始 DMLKF (SCI+ADMM)
 run_dmlkf_v1 = 0;    % 基准 DMLKF_V1 (SCI+No Joint)
 run_dmlkf_v2 = 0;    % 基准 DMLKF_V2 (CI+ADMM)
 run_dmlkf_v3 = 0;    % 新增基准 DMLKF_V3 (CI+No Joint)
-run_dekf = 1;        % 经典 DEKF + CI 融合
+run_dekf = 0;        % 经典 DEKF + CI 融合
 run_diekf = 0;       % DIEKF_V1 + 全维 CI 融合
 run_dukf = 0;        % 流形 DUKF
 
@@ -17,8 +17,8 @@ save_dir = 'E:\SE3_MLKF\Result';
 save_file = fullfile(save_dir, 'D_Anc_num_6V.mat');
 
 dt_imu = 0.01;              % 100Hz 采样步长
-max_admm_iter = 6;
-imu_update_factor = 10;     % 已简化为固定标量，避免频段循环
+max_admm_iter = 2;
+imu_update_factor = 1;     % 已简化为固定标量，避免频段循环
 SCI_rho = 0.8;              % 6基站下为0.8，随基站增加应该稍有提升
 CI_rho = 1.5;
 
@@ -30,7 +30,7 @@ if nargin < 1
     addpath(genpath('../Filter'));
     addpath(genpath('../Data'));
 
-    target_anc = 9; 
+    target_anc = 6; 
     Veh_num = 6;
 end
 

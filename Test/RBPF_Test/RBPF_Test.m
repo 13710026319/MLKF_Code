@@ -14,14 +14,14 @@ save_dir_fig = 'E:\SE3_MLKF\Result\Figure'; % 统一图片保存目录
 
 %% 2. 评测自维参数组配置
 Veh_list = 6; % 评测的车辆规模列表
-Anc_list = 4; % 评测的基站数量列表（支持 5:20, 9:11, 或单基站例如 9）
+Anc_list = 4:35; % 评测的基站数量列表（支持 5:20, 9:11, 或单基站例如 9）
 
 max_admm_iter = 2; % 提高迭代上限，交由收敛判据决定何时提前停止
 SCI_rho = 0.6;        % 默认0.8, 在各基站数下都较为稳定
 admm_conv_tol = 1e-2; % ADMM 原始残差收敛阈值（单位：米），可按场景调整
 admm_min_iter = 2; % 至少运行的迭代次数，避免因偶然小残差过早退出
 
-imu_update_factors = [10]; % IMU更新退化因子 (仅影响DMLKF与DEKF)
+imu_update_factors = [1]; % IMU更新退化因子 (仅影响DMLKF与DEKF)
 SCI_Weight = [0.9]; % 分频公用先验权重系数
 dt_imu = 0.01; % 100Hz 物理基础采样步长
 uwb_downsample_factor = 10; % 10Hz UWB协同更新
@@ -29,7 +29,7 @@ uwb_downsample_factor = 10; % 10Hz UWB协同更新
 % 算法运行控制开关 (1-开启, 0-关闭)
 run_dmlkf = 1; % 运行 DMLKF 算法 (ADMM 分裂协方差版)
 run_dekf = 1; % 运行 DEKF 算法 (全维 CI EKF 基准对照)
-run_rbpf = 0; % 运行 RBPF 算法
+run_rbpf = 1; % 运行 RBPF 算法
 
 run_compare = 0; % 强制运行算法仿真开关 (1-覆盖全部缓存重新运行, 0-读取缓存进行增量计算)
 
@@ -72,7 +72,7 @@ for v_idx = 1 : length(Veh_list)
     % 判断当前 Anc_list 是否为列表（若仅为单个基站，则不保存文件，也不作图）
     is_list = length(Anc_list) > 1;
     if is_list
-        save_file = fullfile(save_dir, sprintf('RBPF_High_Veh%d_Anc%d_to_%d.mat', veh_num, Anc_list(1), Anc_list(end)));
+        save_file = fullfile(save_dir, sprintf('RBPF_High_Veh%d_Anc%d_to_%d_100HZ.mat', veh_num, Anc_list(1), Anc_list(end)));
         if exist(save_file, 'file')
             unified_data = load(save_file);
         end
@@ -107,7 +107,7 @@ for v_idx = 1 : length(Veh_list)
             anc_num = missing_anc_list(a_idx);
 
             % 加载对应基站仿真源文件
-            data_file = sprintf('E:\\SE3_MLKF\\Data\\Low\\Trj_data_Veh%d_Anc%d_3D.mat', veh_num, anc_num);
+            data_file = sprintf('E:\\SE3_MLKF\\Data\\High\\Trj_data_Veh%d_Anc%d_3D.mat', veh_num, anc_num);
             if ~exist(data_file, 'file')
                 data_file = sprintf('../Data/Trj_data_Veh%d_Anc%d_3D.mat', veh_num, anc_num);
                 if ~exist(data_file, 'file')

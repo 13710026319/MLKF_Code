@@ -23,7 +23,7 @@ addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
 %% 2. 评测超参数配置
-imu_update_factors = [1, 2, 5, 10];                 % IMU 更新分频因子 (对应100Hz, 50Hz, 20Hz, 10Hz)
+imu_update_factors = [1];                 % IMU 更新分频因子 (对应100Hz, 50Hz, 20Hz, 10Hz)
 CI_Weight          = [0.92, 0.90, 0.89, 0.88];       % 动态匹配权重 [2]
 Veh_num_list       = 4 : 12;                         % 评测的车辆规模列表
 dt_imu             = 0.01;                           % 100Hz 物理采样步长

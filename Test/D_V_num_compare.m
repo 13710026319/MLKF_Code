@@ -10,16 +10,17 @@ addpath(genpath('../Common'));
 addpath(genpath('../Filter'));
 addpath(genpath('../Data'));
 
-Veh_list = 4 : 12;
+Veh_list = 8;
 uwb_downsample_factor = 10;
-imu_update_factors = [1,2,5,10]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz 等
-CI_Weight = [0.9, 0.9, 0.9, 0.9]; % 频率越高,CI算法的权重逐步提升,10HZ下为默认0.88
-SCI_Weight = [0.92, 0.9, 0.9, 0.9]; % 10HZ下为0.6
+imu_update_factors = [1]; % IMU update 1 = 100Hz, 2 = 50Hz, 5 = 20Hz, 10 = 10Hz 等
+CI_Weight = [0.88, 0.9, 0.9, 0.9]; % 频率越高,CI算法的权重逐步提升,10HZ下为默认0.88
+SCI_Weight = [0.5, 0.9, 0.9, 0.9]; % 10HZ下为0.6
 
 N_veh_tests = length(Veh_list);
 
 save_dir = 'E:\SE3_MLKF\Result\diff_IMURate';
 
+run_flag = 1; % 强制运行仿真、不保存
 %% 2. 核心评测循环
 
 max_admm_iter = 2;
@@ -35,7 +36,7 @@ for f_idx = 1 : length(imu_update_factors)
     save_name = sprintf('D_V_num_6Anc_IMU_%dHZ.mat', 100 / imu_update_factor);
     save_path = fullfile(save_dir, save_name);
 
-    if exist(save_path, 'file')
+    if exist(save_path, 'file') && run_flag == 0
         fprintf('检测到历史数据 [%s]，直接加载...\n', save_name);
         load(save_path);
         jump_to_plot = true;
@@ -44,6 +45,7 @@ for f_idx = 1 : length(imu_update_factors)
         fprintf('未找到结果，开始计算...\n');
     end
 
+    jump_to_plot = false;
     if ~jump_to_plot
         for idx_veh = 1 : N_veh_tests
             veh_num = Veh_list(idx_veh);
@@ -715,13 +717,13 @@ for f_idx = 1 : length(imu_update_factors)
     %% 4. 双子图可视化
     % if exist('rmse_all_dekf', 'var')
     %     figure('Name', 'Multi-Vehicle Distributed Algorithms Comparison', 'Position', [100 100 1400 600]);
-    %
+    % 
     %     pct_diekf = (rmse_all_dekf - rmse_all_diekf) ./ rmse_all_dekf * 100;
     %     pct_v3 = (rmse_all_dekf - rmse_all_v3) ./ rmse_all_dekf * 100;
     %     pct_v2 = (rmse_all_dekf - rmse_all_v2) ./ rmse_all_dekf * 100;
     %     pct_v1 = (rmse_all_dekf - rmse_all_v1) ./ rmse_all_dekf * 100;
     %     pct_dmlkf = (rmse_all_dekf - rmse_all_dmlkf) ./ rmse_all_dekf * 100;
-    %
+    % 
     %     subplot(1, 2, 1);
     %     hold on; grid on;
     %     plot(Veh_list, rmse_all_dekf, 'b-o', 'LineWidth', 2, 'MarkerFaceColor', 'b', 'DisplayName', 'DEKF');
@@ -732,7 +734,7 @@ for f_idx = 1 : length(imu_update_factors)
     %     plot(Veh_list, rmse_all_dmlkf, 'k-p', 'LineWidth', 2.5, 'MarkerFaceColor', 'k', 'DisplayName', 'DMLKF');
     %     xlabel('Vehicle Number'); ylabel('Mean Euclidean RMSE (m)');
     %     title('Position Error Comparison'); legend('Location', 'northwest');
-    %
+    % 
     %     subplot(1, 2, 2);
     %     hold on; grid on;
     %     plot(Veh_list, pct_diekf, 'c-^', 'LineWidth', 2, 'MarkerFaceColor', 'c');
@@ -742,17 +744,17 @@ for f_idx = 1 : length(imu_update_factors)
     %     plot(Veh_list, pct_dmlkf, 'k-p', 'LineWidth', 2.5, 'MarkerFaceColor', 'k');
     %     xlabel('Vehicle Number'); ylabel('Improvement over DEKF (%)');
     %     title('Accuracy Improvement'); legend({'DIEKF', 'V3', 'V2', 'V1', 'DMLKF'}, 'Location', 'southeast');
-    %
+    % 
     %     sgtitle(sprintf('Distributed Multi-Vehicle Localization Performance (6 Anchors, IMU Update %.1f Hz)', 100/imu_update_factor));
     % end
 
     %% 5. 保存
-    if ~jump_to_plot
-        if ~exist(save_dir, 'dir'), mkdir(save_dir); end
-        save(save_path, 'Veh_list', 'rmse_all_dekf', 'rmse_all_diekf', ...
-            'rmse_all_v3', 'rmse_all_v2', 'rmse_all_v1', 'rmse_all_dmlkf');
-        fprintf('结果已保存至：%s\n', save_path);
-    end
+    % if ~jump_to_plot 
+    %     if ~exist(save_dir, 'dir'), mkdir(save_dir); end
+    %     save(save_path, 'Veh_list', 'rmse_all_dekf', 'rmse_all_diekf', ...
+    %         'rmse_all_v3', 'rmse_all_v2', 'rmse_all_v1', 'rmse_all_dmlkf');
+    %     fprintf('结果已保存至：%s\n', save_path);
+    % end
 
 end
 fprintf('评测完成！\n');
